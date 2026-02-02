@@ -1,6 +1,6 @@
-// src/app/api/auth/[...nextauth]/route.ts
-import NextAuth from "next-auth";
+// src/lib/serverAuthOptions.ts
 import GoogleProvider from "next-auth/providers/google";
+import type { NextAuthOptions } from "next-auth";
 import { websiteDb } from "@/lib/db";
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
@@ -8,7 +8,7 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 
-const handler = NextAuth({
+export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
@@ -16,13 +16,11 @@ const handler = NextAuth({
     }),
   ],
   session: { strategy: "jwt" },
-
   callbacks: {
     async signIn({ user }) {
       const email = (user.email || "").toLowerCase().trim();
       if (!email) return false;
 
-      // ✅ Create/ensure user exists in WEBSITE DB
       const db = websiteDb();
       const isAdmin = ADMIN_EMAILS.includes(email);
 
@@ -43,7 +41,6 @@ const handler = NextAuth({
 
       return true;
     },
-
     async jwt({ token }) {
       const email = (token.email || "").toLowerCase().trim();
       if (!email) return token;
@@ -54,17 +51,14 @@ const handler = NextAuth({
         [email]
       );
 
-      token.role = res.rows[0]?.role || "user";
-      token.status = res.rows[0]?.status || "pending";
+      (token as any).role = res.rows[0]?.role || "user";
+      (token as any).status = res.rows[0]?.status || "pending";
       return token;
     },
-
     async session({ session, token }) {
       (session as any).role = (token as any).role || "user";
       (session as any).status = (token as any).status || "pending";
       return session;
     },
   },
-});
-
-export { handler as GET, handler as POST };
+};
