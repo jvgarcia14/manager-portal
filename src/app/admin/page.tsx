@@ -1,33 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 
-type UserRow = {
+type WebUser = {
   id: number;
   email: string;
   name: string | null;
   role: "admin" | "manager";
-  status: "approved" | "pending" | "rejected";
+  status: "pending" | "approved" | "rejected";
   created_at: string;
   last_login_at: string | null;
 };
 
-function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80">
-      {children}
-    </span>
-  );
-}
-
 export default function AdminPage() {
   const { data: session, status } = useSession();
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const myEmail = (session?.user?.email || "").toLowerCase();
+  const myRole = (session as any)?.role;
 
-  const myEmail = session?.user?.email?.toLowerCase() ?? "";
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [users, setUsers] = useState<WebUser[]>([]);
 
   const pendingCount = useMemo(
     () => users.filter((u) => u.status === "pending").length,
@@ -40,56 +33,64 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/admin/users", { cache: "no-store" });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Failed to load");
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Failed to load users");
       }
       const data = await res.json();
       setUsers(data.users || []);
     } catch (e: any) {
-      setErr(e.message || "Error");
+      setErr(e?.message || "Error");
     } finally {
       setLoading(false);
     }
   }
 
-  async function updateUser(id: number, patch: Partial<Pick<UserRow, "status" | "role">>) {
-    const res = await fetch("/api/admin/users", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data?.error || "Update failed");
-      return;
+  async function updateUser(id: number, patch: Partial<Pick<WebUser, "status" | "role">>) {
+    setErr(null);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Update failed");
+      }
+      await load();
+    } catch (e: any) {
+      setErr(e?.message || "Error");
     }
-
-    const data = await res.json();
-    const updated: UserRow = data.user;
-
-    setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
   }
 
   useEffect(() => {
-    if (status === "authenticated") load();
-  }, [status]);
+    if (status === "authenticated" && myRole === "admin") load();
+  }, [status, myRole]);
 
-  if (status === "loading") {
-    return <div className="min-h-screen bg-[#050816] text-white p-8">Loading…</div>;
+  if (status === "loading") return <div className="min-h-screen bg-[#050816] text-white p-10">Loading…</div>;
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-[#050816] text-white p-10">
+        <div className="max-w-xl mx-auto rounded-2xl border border-white/10 bg-white/5 p-6">
+          <h1 className="text-2xl font-semibold">Admin</h1>
+          <p className="text-white/70 mt-2">Please sign in first.</p>
+        </div>
+      </div>
+    );
   }
 
-  if (status === "unauthenticated") {
+  if (myRole !== "admin") {
     return (
-      <div className="min-h-screen bg-[#050816] text-white p-8 flex items-center justify-center">
-        <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-6">
-          <h1 className="text-xl font-semibold">Admin</h1>
-          <p className="text-white/70 mt-2">Please sign in to continue.</p>
+      <div className="min-h-screen bg-[#050816] text-white p-10">
+        <div className="max-w-xl mx-auto rounded-2xl border border-white/10 bg-white/5 p-6">
+          <h1 className="text-2xl font-semibold">Access denied</h1>
+          <p className="text-white/70 mt-2">Only admins can view this page.</p>
           <button
-            onClick={() => signIn("google")}
-            className="mt-5 w-full rounded-xl bg-white text-black font-medium py-2"
+            onClick={() => signOut({ callbackUrl: "/intro" })}
+            className="mt-4 rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm hover:bg-white/15"
           >
-            Sign in with Google
+            Sign out
           </button>
         </div>
       </div>
@@ -98,29 +99,41 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#050816] text-white">
-      <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="max-w-6xl mx-auto px-6 py-10">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Admin approvals</h1>
+            <h1 className="text-3xl font-semibold">Admin approvals</h1>
             <p className="text-white/60 mt-1">
               Signed in as <span className="text-white/90">{myEmail}</span>
             </p>
             <div className="mt-3 flex gap-2">
-              <Badge>{pendingCount} pending</Badge>
-              <Badge>{users.length} total</Badge>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs">
+                Pending: <b className="text-white">{pendingCount}</b>
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs">
+                Total: <b className="text-white">{users.length}</b>
+              </span>
             </div>
           </div>
 
-          <button
-            onClick={load}
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
-          >
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={load}
+              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm hover:bg-white/15"
+            >
+              Refresh
+            </button>
+            <button
+              onClick={() => signOut({ callbackUrl: "/intro" })}
+              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm hover:bg-white/15"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
             <div className="text-sm text-white/70">Users</div>
             {err ? <div className="text-sm text-red-300">{err}</div> : null}
           </div>
@@ -130,48 +143,59 @@ export default function AdminPage() {
           ) : (
             <div className="divide-y divide-white/10">
               {users.map((u) => (
-                <div key={u.id} className="p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  <div>
+                <div key={u.id} className="px-5 py-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
+                  <div className="flex-1">
                     <div className="font-medium">{u.email}</div>
-                    <div className="text-sm text-white/60">
-                      {u.name || "—"} · role: <span className="text-white/80">{u.role}</span> · status:{" "}
-                      <span className="text-white/80">{u.status}</span>
+                    <div className="text-xs text-white/60">
+                      {u.name || "—"} • created {new Date(u.created_at).toLocaleString()}
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/60">Role</span>
+                    <select
+                      value={u.role}
+                      onChange={(e) => updateUser(u.id, { role: e.target.value as any })}
+                      className="rounded-lg border border-white/10 bg-[#050816] px-2 py-1 text-sm"
+                    >
+                      <option value="manager">manager</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/60">Status</span>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs border ${
+                        u.status === "approved"
+                          ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
+                          : u.status === "rejected"
+                          ? "border-red-300/30 bg-red-400/10 text-red-200"
+                          : "border-amber-300/30 bg-amber-400/10 text-amber-200"
+                      }`}
+                    >
+                      {u.status}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
                     <button
                       onClick={() => updateUser(u.id, { status: "approved" })}
-                      className="rounded-xl bg-emerald-400/15 border border-emerald-400/30 px-3 py-2 text-sm hover:bg-emerald-400/20"
+                      className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
                     >
                       Approve
                     </button>
                     <button
                       onClick={() => updateUser(u.id, { status: "rejected" })}
-                      className="rounded-xl bg-red-400/15 border border-red-400/30 px-3 py-2 text-sm hover:bg-red-400/20"
+                      className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
                     >
                       Reject
                     </button>
                     <button
                       onClick={() => updateUser(u.id, { status: "pending" })}
-                      className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm hover:bg-white/10"
+                      className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
                     >
-                      Set pending
-                    </button>
-
-                    <div className="w-px bg-white/10 mx-1" />
-
-                    <button
-                      onClick={() => updateUser(u.id, { role: "admin", status: "approved" })}
-                      className="rounded-xl bg-indigo-400/15 border border-indigo-400/30 px-3 py-2 text-sm hover:bg-indigo-400/20"
-                    >
-                      Make admin
-                    </button>
-                    <button
-                      onClick={() => updateUser(u.id, { role: "manager" })}
-                      className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm hover:bg-white/10"
-                    >
-                      Make manager
+                      Pending
                     </button>
                   </div>
                 </div>
@@ -182,10 +206,6 @@ export default function AdminPage() {
               ) : null}
             </div>
           )}
-        </div>
-
-        <div className="mt-6 text-xs text-white/50">
-          Tip: tell your teammates to visit <span className="text-white/70">/intro</span> once — they’ll appear here as pending.
         </div>
       </div>
     </div>
