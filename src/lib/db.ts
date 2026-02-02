@@ -1,36 +1,32 @@
+// src/lib/db.ts
 import { Pool } from "pg";
 
-let websitePool: Pool | null = null;
-let salesPool: Pool | null = null;
-let attendancePool: Pool | null = null;
-
-function mustGet(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
-}
-
-function makePool(connectionString: string) {
+function makePool(url: string | undefined, name: string) {
+  if (!url) throw new Error(`${name} missing in env`);
   return new Pool({
-    connectionString,
+    connectionString: url,
     ssl: { rejectUnauthorized: false },
   });
 }
 
-// WEBSITE DB (approvals/users)
-export function websiteDb() {
-  if (!websitePool) websitePool = makePool(mustGet("WEBSITE_DATABASE_URL"));
-  return websitePool;
-}
+// cache pools in dev to avoid hot-reload creating too many connections
+const g = globalThis as unknown as {
+  __salesPool?: Pool;
+  __attendancePool?: Pool;
+  __websitePool?: Pool;
+};
 
-// SALES DB (sales bot)
 export function salesDb() {
-  if (!salesPool) salesPool = makePool(mustGet("SALES_DATABASE_URL"));
-  return salesPool;
+  if (!g.__salesPool) g.__salesPool = makePool(process.env.SALES_DATABASE_URL, "SALES_DATABASE_URL");
+  return g.__salesPool;
 }
 
-// ATTENDANCE DB (attendance bot)
 export function attendanceDb() {
-  if (!attendancePool) attendancePool = makePool(mustGet("ATTENDANCE_DATABASE_URL"));
-  return attendancePool;
+  if (!g.__attendancePool) g.__attendancePool = makePool(process.env.ATTENDANCE_DATABASE_URL, "ATTENDANCE_DATABASE_URL");
+  return g.__attendancePool;
+}
+
+export function websiteDb() {
+  if (!g.__websitePool) g.__websitePool = makePool(process.env.WEBSITE_DATABASE_URL || process.env.DATABASE_URL, "WEBSITE_DATABASE_URL/DATABASE_URL");
+  return g.__websitePool;
 }

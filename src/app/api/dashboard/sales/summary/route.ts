@@ -1,46 +1,58 @@
+// src/app/api/dashboard/sales/summary/route.ts
 import { NextResponse } from "next/server";
 import { salesDb } from "@/lib/db";
-import { requireApprovedSession } from "@/lib/requireApproved";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: Request) {
-  const auth = await requireApprovedSession();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
-
   const { searchParams } = new URL(req.url);
-  const team = String(searchParams.get("team") || "");
+
+  const team = (searchParams.get("team") || "").trim();
+  const days = Number(searchParams.get("days") || "15");
+
+  if (!team) return NextResponse.json({ error: "team is required" }, { status: 400 });
+  if (![15, 30].includes(days)) return NextResponse.json({ error: "days must be 15 or 30" }, { status: 400 });
+
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const pool = salesDb();
+  const client = await pool.connect();
 
   try {
-    const db = salesDb();
-
-    // ✅ Adjust to your schema. This assumes:
-    // table: sales
-    // columns: team, amount, created_at
-    const res = await db.query(
+    const totalSalesRes = await client.query(
       `
-      SELECT
-        COALESCE(SUM(amount)::numeric, 0) AS total_15d,
-        COALESCE(SUM(CASE WHEN created_at::date = (now() AT TIME ZONE 'Asia/Manila')::date THEN amount ELSE 0 END)::numeric, 0) AS today
+      SELECT COALESCE(SUM(amount), 0) AS total_sales
       FROM sales
-      WHERE created_at >= now() - interval '15 days'
-        AND ($1 = '' OR team = $1)
+      WHERE team = $1 AND ts >= $2
+      `,
+      [team, cutoff]
+    );
+
+    const totalGoalRes = await client.query(
+      `
+      SELECT COALESCE(SUM(goal), 0) AS total_goal
+      FROM page_goals
+      WHERE team = $1
       `,
       [team]
     );
 
+    const totalSales = Number(totalSalesRes.rows?.[0]?.total_sales || 0);
+    const totalGoal = Number(totalGoalRes.rows?.[0]?.total_goal || 0);
+
     return NextResponse.json({
       team,
-      today: Number(res.rows[0]?.today || 0),
-      total15d: Number(res.rows[0]?.total_15d || 0),
+      days,
+      totalSales: Math.round(totalSales * 100) / 100,
+      totalGoal: Math.round(totalGoal * 100) / 100,
     });
-  } catch {
-    // Demo fallback
-    return NextResponse.json({
-      team,
-      today: 0,
-      total15d: 5302.59,
-      demo: true,
-    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: "sales summary failed", detail: String(e?.message || e) },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
   }
 }
