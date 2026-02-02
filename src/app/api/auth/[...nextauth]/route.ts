@@ -1,36 +1,66 @@
-import NextAuth, { type NextAuthOptions } from "next-auth";
+import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
-import { getApprovalStatus } from "@/lib/requireApproved";
+import { websiteDb } from "@/lib/db";
 
-export const authOptions: NextAuthOptions = {
+function parseAdminEmails(v?: string) {
+  return (v || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export const authOptions = {
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   ],
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt" as const },
   callbacks: {
-    async jwt({ token }) {
-      // Attach approval status/role into token on every request
-      if (token?.email) {
-        const { status, role } = await getApprovalStatus(String(token.email));
-        (token as any).status = status;
-        (token as any).role = role;
+    async jwt({ token }: any) {
+      const email = String(token?.email || "").toLowerCase();
+      if (!email) return token;
+
+      // ADMIN override
+      const admins = parseAdminEmails(process.env.ADMIN_EMAILS);
+      if (admins.includes(email)) {
+        token.role = "admin";
+        token.status = "approved";
+        return token;
       }
+
+      // normal user -> check WEBSITE DB
+      try {
+        const db = websiteDb();
+        const res = await db.query(
+          `SELECT status, COALESCE(role,'user') as role
+           FROM users
+           WHERE lower(email)=lower($1)
+           LIMIT 1`,
+          [email]
+        );
+
+        const row = res.rows[0];
+        token.role = row?.role || "user";
+        token.status = row?.status || "pending";
+      } catch {
+        token.role = "user";
+        token.status = "pending";
+      }
+
       return token;
     },
-    async session({ session, token }) {
-      (session as any).status = (token as any).status ?? "pending";
-      (session as any).role = (token as any).role ?? "user";
+
+    async session({ session, token }: any) {
+      session.role = token.role || "user";
+      session.status = token.status || "pending";
       return session;
     },
-  },
-  pages: {
-    signIn: "/intro",
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
 
 const handler = NextAuth(authOptions);
+
 export { handler as GET, handler as POST };

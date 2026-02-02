@@ -10,44 +10,28 @@ function mustGet(name: string) {
   return v;
 }
 
-/**
- * WEBSITE DB (users / approvals)
- * env: WEBSITE_DATABASE_URL
- */
+function makePool(url: string) {
+  return new Pool({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+  });
+}
+
+// WEBSITE DB (users/approvals)
 export function websiteDb() {
-  if (!websitePool) {
-    websitePool = new Pool({
-      connectionString: mustGet("WEBSITE_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!websitePool) websitePool = makePool(mustGet("WEBSITE_DATABASE_URL"));
   return websitePool;
 }
 
-/**
- * SALES DB (sales bot)
- * env: SALES_DATABASE_URL
- */
+// SALES DB (sales bot)
 export function salesDb() {
-  if (!salesPool) {
-    salesPool = new Pool({
-      connectionString: mustGet("SALES_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!salesPool) salesPool = makePool(mustGet("SALES_DATABASE_URL"));
   return salesPool;
 }
 
-/**
- * ATTENDANCE DB (attendance bot)
- * env: ATTENDANCE_DATABASE_URL
- */
+// ATTENDANCE DB (attendance bot)
 export function attendanceDb() {
-  if (!attendancePool) {
-    attendancePool = new Pool({
-      connectionString: mustGet("ATTENDANCE_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!attendancePool)
+    attendancePool = makePool(mustGet("ATTENDANCE_DATABASE_URL"));
   return attendancePool;
 }

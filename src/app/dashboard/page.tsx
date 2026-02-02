@@ -3,130 +3,88 @@
 import { useEffect, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 
+type TeamsResp = { teams: string[]; error?: string };
+type SalesSummary = { team: string; today: number; total15: number; error?: string };
+type SalesPages = { rows: { pageName: string; total: number }[]; error?: string };
+type AttSummary = { attendanceDay?: string; clockedIn: number; covers: number; error?: string };
+type AttPages = { rows: { pageKey: string; shift: string; clockedIn: number; covers: number }[]; error?: string };
+
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(`API returned non-JSON (${res.status}). Body: ${text.slice(0, 220)}`);
+    // This prevents "Unexpected end of JSON input"
+    throw new Error(`API did not return JSON (status ${res.status}). Body: ${text.slice(0, 120)}...`);
   }
 }
 
-type SalesSummary = {
-  todaySales: number;
-  totalSales15d: number;
-  team: string;
-};
-
-type SalesPageRow = {
-  page: string;
-  total: number;
-  goal?: number | null;
-};
-
-type AttendanceSummary = {
-  attendanceDay: string | null;
-  clockedIn: number;
-  covers: number;
-};
-
-type AttendanceRow = {
-  shift: string;
-  pageKey: string;
-  clockedIn: number;
-  covers: number;
-  lastTime: string | null;
-};
-
 export default function DashboardPage() {
   const { data: session, status } = useSession();
-  const s: any = session;
-  const userStatus = s?.status;
-  const role = s?.role ?? "user";
 
   const [teams, setTeams] = useState<string[]>([]);
-  const [team, setTeam] = useState<string>("Black");
+  const [team, setTeam] = useState<string>("");
+
+  const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
+  const [salesPages, setSalesPages] = useState<SalesPages | null>(null);
+
+  const [attSummary, setAttSummary] = useState<AttSummary | null>(null);
+  const [attPages, setAttPages] = useState<AttPages | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
-  const [salesSummary, setSalesSummary] = useState<SalesSummary>({
-    todaySales: 0,
-    totalSales15d: 0,
-    team: "Black",
-  });
-  const [salesPages, setSalesPages] = useState<SalesPageRow[]>([]);
+  const email = session?.user?.email || "";
 
-  const [attSummary, setAttSummary] = useState<AttendanceSummary>({
-    attendanceDay: null,
-    clockedIn: 0,
-    covers: 0,
-  });
-  const [attRows, setAttRows] = useState<AttendanceRow[]>([]);
-
-  const isApproved = userStatus === "approved";
+  const userOk = useMemo(() => {
+    const s: any = session;
+    return !!session && s?.status === "approved";
+  }, [session]);
 
   useEffect(() => {
-    if (!isApproved) return;
+    if (!userOk) return;
 
     (async () => {
-      setError("");
       try {
         const res = await fetch("/api/dashboard/teams", { cache: "no-store" });
-        const data = await safeJson<{ teams: string[] }>(res);
-        const list = (data.teams || []).filter(Boolean);
-        setTeams(list.length ? list : ["Black", "Bruiser", "Cobra", "Killa", "Ninja", "Spartan"]);
-        if (list.length) setTeam(list[0]);
+        const data = await safeJson<TeamsResp>(res);
+        const list = data.teams || [];
+        setTeams(list);
+        setTeam((prev) => prev || list[0] || "");
       } catch (e: any) {
-        setTeams(["Black", "Bruiser", "Cobra", "Killa", "Ninja", "Spartan"]);
-        setError(e?.message ?? "Failed loading teams");
+        setError(e?.message || "Failed to load teams");
       }
     })();
-  }, [isApproved]);
+  }, [userOk]);
 
   useEffect(() => {
-    if (!isApproved) return;
+    if (!userOk) return;
 
     (async () => {
       setLoading(true);
       setError("");
+
       try {
-        const [sumRes, pagesRes, attSumRes, attPagesRes] = await Promise.all([
-          fetch(`/api/dashboard/sales/summary?team=${encodeURIComponent(team)}`, { cache: "no-store" }),
-          fetch(`/api/dashboard/sales/pages?team=${encodeURIComponent(team)}`, { cache: "no-store" }),
+        const qs = team ? `?team=${encodeURIComponent(team)}` : "";
+
+        const [s1, s2, a1, a2] = await Promise.all([
+          fetch(`/api/dashboard/sales/summary${qs}`, { cache: "no-store" }),
+          fetch(`/api/dashboard/sales/pages${qs}`, { cache: "no-store" }),
           fetch(`/api/dashboard/attendance/summary`, { cache: "no-store" }),
           fetch(`/api/dashboard/attendance/pages`, { cache: "no-store" }),
         ]);
 
-        const sum = await safeJson<SalesSummary>(sumRes);
-        const pages = await safeJson<{ rows: SalesPageRow[] }>(pagesRes);
-        const aSum = await safeJson<AttendanceSummary>(attSumRes);
-        const aPages = await safeJson<{ rows: AttendanceRow[] }>(attPagesRes);
-
-        setSalesSummary(sum);
-        setSalesPages(pages.rows || []);
-        setAttSummary(aSum);
-        setAttRows(aPages.rows || []);
+        setSalesSummary(await safeJson<SalesSummary>(s1));
+        setSalesPages(await safeJson<SalesPages>(s2));
+        setAttSummary(await safeJson<AttSummary>(a1));
+        setAttPages(await safeJson<AttPages>(a2));
       } catch (e: any) {
-        setError(
-          (e?.message ?? "Failed loading data") +
-            "\n\nCheck Railway variables: SALES_DATABASE_URL and ATTENDANCE_DATABASE_URL."
-        );
+        setError(e?.message || "Failed to load dashboard data");
       } finally {
         setLoading(false);
       }
     })();
-  }, [team, isApproved]);
-
-  const money = useMemo(
-    () => (n: number) =>
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 2,
-      }).format(Number.isFinite(n) ? n : 0),
-    []
-  );
+  }, [userOk, team]);
 
   if (status === "loading") {
     return (
@@ -151,12 +109,17 @@ export default function DashboardPage() {
     );
   }
 
-  if (!isApproved) {
+  const s: any = session;
+  const userStatus = s?.status;
+
+  if (userStatus !== "approved") {
     return (
       <div className="container">
         <div className="card">
           <h1 className="h1">Awaiting approval</h1>
-          <p className="small">Your account is pending admin approval. You can’t access the dashboard yet.</p>
+          <p className="small">
+            Your account is pending admin approval. You can’t access the dashboard yet.
+          </p>
           <div className="spacer" />
           <a className="btn" href="/intro">
             Back to Intro
@@ -169,6 +132,9 @@ export default function DashboardPage() {
     );
   }
 
+  const fmtMoney = (n: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
+
   return (
     <div className="container">
       <div className="nav">
@@ -177,8 +143,8 @@ export default function DashboardPage() {
           <span className="badge">Dashboard</span>
         </div>
         <div className="row" style={{ gap: 10 }}>
-          <span className="badge">{session.user?.email}</span>
-          <span className="badge">Role: {role}</span>
+          <span className="badge">{email}</span>
+          <span className="badge">Role: {s?.role || "user"}</span>
           <button className="btn" onClick={() => signOut()}>
             Sign out
           </button>
@@ -188,12 +154,12 @@ export default function DashboardPage() {
       <div className="spacer" />
 
       <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
           <div>
-            <h1 className="h1" style={{ marginBottom: 6 }}>
-              Sales Dashboard
-            </h1>
-            <p className="small">Live read-only view from Sales + Attendance Postgres. Built for internal demo.</p>
+            <h1 className="h1" style={{ marginBottom: 6 }}>Sales Dashboard</h1>
+            <p className="small">
+              Live read-only view from Sales + Attendance Postgres. Built for internal demo.
+            </p>
           </div>
           <span className="badge">{loading ? "Refreshing…" : "Live"}</span>
         </div>
@@ -201,123 +167,139 @@ export default function DashboardPage() {
         <div className="spacer" />
 
         {/* Team Pills */}
-        <div className="pillRow">
-          {(teams.length ? teams : ["Black", "Bruiser", "Cobra", "Killa", "Ninja", "Spartan"]).map((t) => (
-            <button
-              key={t}
-              className={`pill ${team === t ? "pillActive" : ""}`}
-              onClick={() => setTeam(t)}
-            >
-              {t}
-            </button>
-          ))}
+        <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
+          {teams.length === 0 ? (
+            <span className="badge">No teams found</span>
+          ) : (
+            teams.map((t) => (
+              <button
+                key={t}
+                className="btn"
+                style={{
+                  borderRadius: 999,
+                  padding: "10px 14px",
+                  opacity: team === t ? 1 : 0.75,
+                  border: team === t ? "1px solid rgba(120,120,255,.8)" : undefined,
+                }}
+                onClick={() => setTeam(t)}
+              >
+                {t}
+              </button>
+            ))
+          )}
         </div>
 
         <div className="spacer" />
 
         {error ? (
-          <div className="errorBox">
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>Error</div>
-            <div className="small" style={{ whiteSpace: "pre-wrap" }}>
-              {error}
-            </div>
+          <div className="card" style={{ border: "1px solid rgba(255,80,80,.35)" }}>
+            <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>
+              <b>Error:</b> {error}
+            </p>
+            <p className="small">Check Railway variables: <b>SALES_DATABASE_URL</b> and <b>ATTENDANCE_DATABASE_URL</b>.</p>
           </div>
         ) : null}
 
         <div className="spacer" />
 
         {/* KPIs */}
-        <div className="kpiGrid">
-          <div className="cardSoft">
+        <div className="row">
+          <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">Today Sales</p>
-            <p className="kpiValue">{money(salesSummary.todaySales)}</p>
-            <p className="small">Team: {team}</p>
+            <p className="kpiValue">{fmtMoney(salesSummary?.today || 0)}</p>
+            <p className="small">Team: {team || "—"}</p>
           </div>
-          <div className="cardSoft">
+          <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">Total Sales (15d)</p>
-            <p className="kpiValue">{money(salesSummary.totalSales15d)}</p>
+            <p className="kpiValue">{fmtMoney(salesSummary?.total15 || 0)}</p>
             <p className="small">Rolling last 15 days</p>
           </div>
-          <div className="cardSoft">
+          <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">On shift (today)</p>
-            <p className="kpiValue">{attSummary.clockedIn}</p>
-            <p className="small">Covers: {attSummary.covers}</p>
+            <p className="kpiValue">{attSummary?.clockedIn || 0}</p>
+            <p className="small">Covers: {attSummary?.covers || 0}</p>
           </div>
         </div>
 
         <div className="hr" />
 
-        <h2 style={{ margin: 0, fontSize: 18 }}>Page Performance (15d)</h2>
-        <p className="small">Shows sales totals by page. If page goals exist, we show progress.</p>
+        {/* Sales Pages */}
+        <h2 className="h2">Page Performance (15d)</h2>
+        <p className="small">Shows sales totals by page. (Goals can be added next.)</p>
 
         <div className="spacer" />
 
-        {salesPages.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Page</th>
-                <th>Total</th>
-                <th>Goal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salesPages.map((r) => (
-                <tr key={r.page}>
-                  <td>{r.page}</td>
-                  <td>{money(r.total)}</td>
-                  <td>{r.goal == null ? "—" : money(Number(r.goal))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {salesPages?.rows?.length ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {salesPages.rows.map((r) => (
+              <div key={r.pageName} className="card" style={{ padding: 14 }}>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <b>{r.pageName}</b>
+                  <b>{fmtMoney(r.total)}</b>
+                </div>
+                <div className="hr" style={{ margin: "10px 0" }} />
+                <div
+                  style={{
+                    height: 10,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,.08)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, (r.total / Math.max(1, salesSummary?.total15 || 1)) * 100)}%`,
+                      background: "rgba(120,120,255,.7)",
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <div className="small">No sales found for this team (last 15 days).</div>
+          <p className="small">No sales found for this team (last 15 days).</p>
         )}
 
         <div className="hr" />
 
-        <h2 style={{ margin: 0, fontSize: 18 }}>Attendance Today</h2>
+        {/* Attendance */}
+        <h2 className="h2">Attendance Today</h2>
         <p className="small">
-          Attendance day starts at <b>6:00 AM PH</b>. (Attendance is global because the bot table has no team column.)
+          Attendance day starts at <b>6:00 AM PH</b>. (Attendance is global unless your bot stores team.)
         </p>
 
         <div className="spacer" />
 
-        <div className="cardSoft">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="badge">Attendance day: {attSummary.attendanceDay ?? "—"}</span>
-            <span className="badge">Clocked in: {attSummary.clockedIn}</span>
-            <span className="badge">Covers: {attSummary.covers}</span>
+        <div className="card" style={{ padding: 14 }}>
+          <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <span className="badge">Attendance day: {attSummary?.attendanceDay || "—"}</span>
+            <span className="badge">Clocked in: {attSummary?.clockedIn || 0}</span>
+            <span className="badge">Covers: {attSummary?.covers || 0}</span>
           </div>
 
           <div className="spacer" />
 
-          {attRows.length ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Shift</th>
-                  <th>Page</th>
-                  <th>Clocked</th>
-                  <th>Covers</th>
-                  <th>Last time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attRows.map((r, idx) => (
-                  <tr key={`${r.pageKey}-${r.shift}-${idx}`}>
-                    <td>{r.shift}</td>
-                    <td>{r.pageKey}</td>
-                    <td>{r.clockedIn}</td>
-                    <td>{r.covers}</td>
-                    <td>{r.lastTime ? String(r.lastTime) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="row" style={{ fontWeight: 700, opacity: 0.9 }}>
+            <div style={{ flex: 1 }}>Shift</div>
+            <div style={{ flex: 2 }}>Page</div>
+            <div style={{ width: 110, textAlign: "right" }}>Clocked</div>
+            <div style={{ width: 110, textAlign: "right" }}>Covers</div>
+          </div>
+
+          <div className="hr" />
+
+          {attPages?.rows?.length ? (
+            attPages.rows.map((r, idx) => (
+              <div key={idx} className="row" style={{ padding: "10px 0" }}>
+                <div style={{ flex: 1 }}>{r.shift}</div>
+                <div style={{ flex: 2 }}>{r.pageKey}</div>
+                <div style={{ width: 110, textAlign: "right" }}>{r.clockedIn}</div>
+                <div style={{ width: 110, textAlign: "right" }}>{r.covers}</div>
+              </div>
+            ))
           ) : (
-            <div className="small">No attendance rows found for today yet.</div>
+            <p className="small">No attendance rows found for today yet.</p>
           )}
         </div>
       </div>

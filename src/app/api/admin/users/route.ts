@@ -1,49 +1,42 @@
 import { NextResponse } from "next/server";
+import { requireApprovedSession } from "@/lib/requireApproved";
 import { websiteDb } from "@/lib/db";
-import { requireAdminSession } from "@/lib/requireApproved";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const auth = await requireAdminSession();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await requireApprovedSession();
 
-  const db = websiteDb();
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS portal_users (
-      email TEXT PRIMARY KEY,
-      status TEXT NOT NULL DEFAULT 'pending',
-      role   TEXT NOT NULL DEFAULT 'user',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  // must be approved
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.error, status: auth.status },
+      { status: 401 }
     );
-  `);
+  }
 
-  const res = await db.query(
-    `SELECT email, status, role, created_at
-     FROM portal_users
-     ORDER BY created_at DESC
-     LIMIT 200`
-  );
+  // must be admin
+  if (auth.role !== "admin") {
+    return NextResponse.json(
+      { error: "Admin only" },
+      { status: 403 }
+    );
+  }
 
-  return NextResponse.json({ rows: res.rows });
-}
+  try {
+    const db = websiteDb();
+    const res = await db.query(
+      `SELECT email, COALESCE(role,'user') as role, COALESCE(status,'pending') as status
+       FROM users
+       ORDER BY status ASC, email ASC
+       LIMIT 200`
+    );
 
-export async function POST(req: Request) {
-  const auth = await requireAdminSession();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-
-  const body = await req.json().catch(() => ({}));
-  const email = String(body.email || "");
-  const status = String(body.status || "pending");
-
-  if (!email) return NextResponse.json({ error: "missing_email" }, { status: 400 });
-
-  const db = websiteDb();
-  await db.query(
-    `UPDATE portal_users SET status=$2 WHERE email=$1`,
-    [email, status]
-  );
-
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ users: res.rows });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Failed to load users" },
+      { status: 500 }
+    );
+  }
 }

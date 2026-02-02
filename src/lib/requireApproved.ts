@@ -2,65 +2,56 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { websiteDb } from "@/lib/db";
 
-export async function getApprovalStatus(email?: string | null) {
-  if (!email) return { status: "anonymous" as const, role: "user" as const };
-
-  const db = websiteDb();
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS portal_users (
-      email TEXT PRIMARY KEY,
-      status TEXT NOT NULL DEFAULT 'pending',
-      role   TEXT NOT NULL DEFAULT 'user',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-
-  // ensure row exists
-  await db.query(
-    `INSERT INTO portal_users (email) VALUES ($1)
-     ON CONFLICT (email) DO NOTHING`,
-    [email]
-  );
-
-  const res = await db.query(
-    `SELECT status, role FROM portal_users WHERE email=$1 LIMIT 1`,
-    [email]
-  );
-
-  const status = String(res.rows?.[0]?.status ?? "pending");
-  const role = String(res.rows?.[0]?.role ?? "user");
-  return { status, role };
+function parseAdminEmails(v?: string) {
+  return (v || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 export async function requireApprovedSession() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return { ok: false as const, status: 401, error: "not_signed_in" };
+  const email = session?.user?.email?.toLowerCase();
+
+  if (!session || !email) {
+    return { ok: false as const, status: "signed_out" as const, error: "Not signed in" };
   }
 
-  const { status, role } = await getApprovalStatus(session.user.email);
-
-  if (status !== "approved") {
-    return { ok: false as const, status: 403, error: "not_approved", userStatus: status, role };
+  // Admin override
+  const admins = parseAdminEmails(process.env.ADMIN_EMAILS);
+  if (admins.includes(email)) {
+    return { ok: true as const, status: "approved" as const, role: "admin" as const, email };
   }
 
-  return { ok: true as const, status: 200, session, userStatus: status, role };
-}
+  // Check website DB approval status
+  try {
+    const db = websiteDb();
 
-export async function requireAdminSession() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return { ok: false as const, status: 401, error: "not_signed_in" };
+    // Table expected: users(email text primary key, status text, role text)
+    // If your table name/columns differ, tell me your schema and I’ll adjust.
+    const res = await db.query(
+      `SELECT status, COALESCE(role,'user') as role
+       FROM users
+       WHERE lower(email) = lower($1)
+       LIMIT 1`,
+      [email]
+    );
+
+    const row = res.rows[0];
+    const status = row?.status || "pending";
+    const role = row?.role || "user";
+
+    if (status !== "approved") {
+      return { ok: false as const, status, error: "Awaiting approval" };
+    }
+
+    return { ok: true as const, status: "approved" as const, role, email };
+  } catch (e: any) {
+    // If DB fails, don’t crash the app; return error JSON
+    return {
+      ok: false as const,
+      status: "error" as const,
+      error: e?.message || "DB error",
+    };
   }
-
-  const { status, role } = await getApprovalStatus(session.user.email);
-
-  if (status !== "approved") {
-    return { ok: false as const, status: 403, error: "not_approved", userStatus: status, role };
-  }
-  if (role !== "admin") {
-    return { ok: false as const, status: 403, error: "not_admin", userStatus: status, role };
-  }
-
-  return { ok: true as const, status: 200, session, userStatus: status, role };
 }
