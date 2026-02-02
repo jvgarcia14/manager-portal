@@ -10,28 +10,35 @@ function mustGet(name: string) {
   return v;
 }
 
-function makePool(url: string) {
-  return new Pool({
-    connectionString: url,
-    ssl: { rejectUnauthorized: false },
-  });
-}
-
 // WEBSITE DB (users/approvals)
 export function websiteDb() {
-  if (!websitePool) websitePool = makePool(mustGet("WEBSITE_DATABASE_URL"));
+  if (!websitePool) {
+    websitePool = new Pool({
+      connectionString: mustGet("WEBSITE_DATABASE_URL"),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
   return websitePool;
 }
 
 // SALES DB (sales bot)
 export function salesDb() {
-  if (!salesPool) salesPool = makePool(mustGet("SALES_DATABASE_URL"));
+  if (!salesPool) {
+    salesPool = new Pool({
+      connectionString: mustGet("SALES_DATABASE_URL"),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
   return salesPool;
 }
 
 // ATTENDANCE DB (attendance bot)
 export function attendanceDb() {
-  if (!attendancePool)
-    attendancePool = makePool(mustGet("ATTENDANCE_DATABASE_URL"));
+  if (!attendancePool) {
+    attendancePool = new Pool({
+      connectionString: mustGet("ATTENDANCE_DATABASE_URL"),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
   return attendancePool;
 }

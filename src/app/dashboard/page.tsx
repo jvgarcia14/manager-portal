@@ -1,90 +1,85 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { signOut, useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 
-type TeamsResp = { teams: string[]; error?: string };
-type SalesSummary = { team: string; today: number; total15: number; error?: string };
-type SalesPages = { rows: { pageName: string; total: number }[]; error?: string };
-type AttSummary = { attendanceDay?: string; clockedIn: number; covers: number; error?: string };
-type AttPages = { rows: { pageKey: string; shift: string; clockedIn: number; covers: number }[]; error?: string };
+type SalesPageRow = { page: string; total: number; goal: number };
+type AttendanceRow = { pageKey: string; shift: string; clockedIn: number; covers: number };
 
-async function safeJson<T>(res: Response): Promise<T> {
-  const text = await res.text();
+async function safeJson(url: string) {
+  const r = await fetch(url, { cache: "no-store" });
+  const text = await r.text();
   try {
-    return JSON.parse(text) as T;
+    const json = JSON.parse(text);
+    if (!r.ok) throw new Error(json?.error || `HTTP ${r.status}`);
+    return json;
   } catch {
-    // This prevents "Unexpected end of JSON input"
-    throw new Error(`API did not return JSON (status ${res.status}). Body: ${text.slice(0, 120)}...`);
+    throw new Error(text || `HTTP ${r.status}`);
   }
 }
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
+  const s: any = session;
+  const userStatus = s?.status;
+  const role = s?.role || "user";
 
   const [teams, setTeams] = useState<string[]>([]);
   const [team, setTeam] = useState<string>("");
 
-  const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
-  const [salesPages, setSalesPages] = useState<SalesPages | null>(null);
-
-  const [attSummary, setAttSummary] = useState<AttSummary | null>(null);
-  const [attPages, setAttPages] = useState<AttPages | null>(null);
-
+  const [salesSummary, setSalesSummary] = useState<{ today: number; total15d: number } | null>(null);
+  const [salesPages, setSalesPages] = useState<SalesPageRow[]>([]);
+  const [attSummary, setAttSummary] = useState<{ attendanceDay: string; clockedIn: number; covers: number } | null>(null);
+  const [attRows, setAttRows] = useState<AttendanceRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [err, setErr] = useState<string>("");
 
-  const email = session?.user?.email || "";
-
-  const userOk = useMemo(() => {
-    const s: any = session;
-    return !!session && s?.status === "approved";
-  }, [session]);
+  const teamDisplay = useMemo(() => team || (teams[0] || ""), [team, teams]);
 
   useEffect(() => {
-    if (!userOk) return;
+    if (!session) return;
+    if (userStatus !== "approved") return;
 
     (async () => {
       try {
-        const res = await fetch("/api/dashboard/teams", { cache: "no-store" });
-        const data = await safeJson<TeamsResp>(res);
-        const list = data.teams || [];
-        setTeams(list);
-        setTeam((prev) => prev || list[0] || "");
+        const t = await safeJson("/api/dashboard/teams");
+        setTeams(t.teams || []);
+        if (!team && (t.teams?.length || 0) > 0) setTeam(t.teams[0]);
       } catch (e: any) {
-        setError(e?.message || "Failed to load teams");
+        setErr(e.message || "Failed to load teams");
       }
     })();
-  }, [userOk]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, userStatus]);
 
   useEffect(() => {
-    if (!userOk) return;
+    if (!session) return;
+    if (userStatus !== "approved") return;
+    if (!teamDisplay) return;
+
+    setLoading(true);
+    setErr("");
 
     (async () => {
-      setLoading(true);
-      setError("");
-
       try {
-        const qs = team ? `?team=${encodeURIComponent(team)}` : "";
-
-        const [s1, s2, a1, a2] = await Promise.all([
-          fetch(`/api/dashboard/sales/summary${qs}`, { cache: "no-store" }),
-          fetch(`/api/dashboard/sales/pages${qs}`, { cache: "no-store" }),
-          fetch(`/api/dashboard/attendance/summary`, { cache: "no-store" }),
-          fetch(`/api/dashboard/attendance/pages`, { cache: "no-store" }),
+        const [ss, sp, as, ap] = await Promise.all([
+          safeJson(`/api/dashboard/sales/summary?team=${encodeURIComponent(teamDisplay)}`),
+          safeJson(`/api/dashboard/sales/pages?team=${encodeURIComponent(teamDisplay)}`),
+          safeJson(`/api/dashboard/attendance/summary`),
+          safeJson(`/api/dashboard/attendance/pages`),
         ]);
 
-        setSalesSummary(await safeJson<SalesSummary>(s1));
-        setSalesPages(await safeJson<SalesPages>(s2));
-        setAttSummary(await safeJson<AttSummary>(a1));
-        setAttPages(await safeJson<AttPages>(a2));
+        setSalesSummary({ today: ss.today || 0, total15d: ss.total15d || 0 });
+        setSalesPages(sp.rows || []);
+        setAttSummary({ attendanceDay: as.attendanceDay || "", clockedIn: as.clockedIn || 0, covers: as.covers || 0 });
+        setAttRows(ap.rows || []);
       } catch (e: any) {
-        setError(e?.message || "Failed to load dashboard data");
+        setErr(e.message || "Failed to load dashboard data");
       } finally {
         setLoading(false);
       }
     })();
-  }, [userOk, team]);
+  }, [session, userStatus, teamDisplay]);
 
   if (status === "loading") {
     return (
@@ -101,38 +96,27 @@ export default function DashboardPage() {
           <h1 className="h1">Not signed in</h1>
           <p className="small">Go to /intro and sign in with Google.</p>
           <div className="spacer" />
-          <a className="btn btnPrimary" href="/intro">
-            Go to Intro
-          </a>
+          <a className="btn btnPrimary" href="/intro">Go to Intro</a>
         </div>
       </div>
     );
   }
-
-  const s: any = session;
-  const userStatus = s?.status;
 
   if (userStatus !== "approved") {
     return (
       <div className="container">
         <div className="card">
           <h1 className="h1">Awaiting approval</h1>
-          <p className="small">
-            Your account is pending admin approval. You can’t access the dashboard yet.
-          </p>
+          <p className="small">Your account is pending admin approval.</p>
           <div className="spacer" />
-          <a className="btn" href="/intro">
-            Back to Intro
-          </a>
-          <button className="btn" onClick={() => signOut()}>
-            Sign out
-          </button>
+          <a className="btn" href="/intro">Back to Intro</a>
+          <button className="btn" onClick={() => signOut()}>Sign out</button>
         </div>
       </div>
     );
   }
 
-  const fmtMoney = (n: number) =>
+  const money = (n: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
 
   return (
@@ -143,11 +127,9 @@ export default function DashboardPage() {
           <span className="badge">Dashboard</span>
         </div>
         <div className="row" style={{ gap: 10 }}>
-          <span className="badge">{email}</span>
-          <span className="badge">Role: {s?.role || "user"}</span>
-          <button className="btn" onClick={() => signOut()}>
-            Sign out
-          </button>
+          <span className="badge">{session.user?.email}</span>
+          <span className="badge">Role: {role}</span>
+          <button className="btn" onClick={() => signOut()}>Sign out</button>
         </div>
       </div>
 
@@ -157,9 +139,7 @@ export default function DashboardPage() {
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
           <div>
             <h1 className="h1" style={{ marginBottom: 6 }}>Sales Dashboard</h1>
-            <p className="small">
-              Live read-only view from Sales + Attendance Postgres. Built for internal demo.
-            </p>
+            <p className="small">Live read-only view from Sales + Attendance Postgres. Built for internal demo.</p>
           </div>
           <span className="badge">{loading ? "Refreshing…" : "Live"}</span>
         </div>
@@ -168,36 +148,33 @@ export default function DashboardPage() {
 
         {/* Team Pills */}
         <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
-          {teams.length === 0 ? (
-            <span className="badge">No teams found</span>
-          ) : (
-            teams.map((t) => (
-              <button
-                key={t}
-                className="btn"
-                style={{
-                  borderRadius: 999,
-                  padding: "10px 14px",
-                  opacity: team === t ? 1 : 0.75,
-                  border: team === t ? "1px solid rgba(120,120,255,.8)" : undefined,
-                }}
-                onClick={() => setTeam(t)}
-              >
-                {t}
-              </button>
-            ))
-          )}
+          {teams.map((t) => (
+            <button
+              key={t}
+              className="btn"
+              onClick={() => setTeam(t)}
+              style={{
+                borderRadius: 999,
+                padding: "10px 14px",
+                opacity: teamDisplay === t ? 1 : 0.75,
+                border: teamDisplay === t ? "1px solid rgba(120,120,255,.8)" : undefined,
+              }}
+            >
+              {t}
+            </button>
+          ))}
         </div>
 
-        <div className="spacer" />
-
-        {error ? (
-          <div className="card" style={{ border: "1px solid rgba(255,80,80,.35)" }}>
-            <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>
-              <b>Error:</b> {error}
-            </p>
-            <p className="small">Check Railway variables: <b>SALES_DATABASE_URL</b> and <b>ATTENDANCE_DATABASE_URL</b>.</p>
-          </div>
+        {err ? (
+          <>
+            <div className="spacer" />
+            <div className="card" style={{ border: "1px solid rgba(255,80,80,.35)" }}>
+              <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>
+                Error: {err}
+              </p>
+              <p className="small">If this is DB-related, re-check Railway variables: SALES_DATABASE_URL and ATTENDANCE_DATABASE_URL.</p>
+            </div>
+          </>
         ) : null}
 
         <div className="spacer" />
@@ -206,12 +183,12 @@ export default function DashboardPage() {
         <div className="row">
           <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">Today Sales</p>
-            <p className="kpiValue">{fmtMoney(salesSummary?.today || 0)}</p>
-            <p className="small">Team: {team || "—"}</p>
+            <p className="kpiValue">{money(salesSummary?.today || 0)}</p>
+            <p className="small">Team: {teamDisplay}</p>
           </div>
           <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">Total Sales (15d)</p>
-            <p className="kpiValue">{fmtMoney(salesSummary?.total15 || 0)}</p>
+            <p className="kpiValue">{money(salesSummary?.total15d || 0)}</p>
             <p className="small">Rolling last 15 days</p>
           </div>
           <div className="kpi" style={{ flex: 1 }}>
@@ -223,42 +200,26 @@ export default function DashboardPage() {
 
         <div className="hr" />
 
-        {/* Sales Pages */}
+        {/* Page Performance */}
         <h2 className="h2">Page Performance (15d)</h2>
         <p className="small">Shows sales totals by page. (Goals can be added next.)</p>
-
         <div className="spacer" />
 
-        {salesPages?.rows?.length ? (
+        {salesPages.length === 0 ? (
+          <p className="small">No sales found for this team (last 15 days).</p>
+        ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {salesPages.rows.map((r) => (
-              <div key={r.pageName} className="card" style={{ padding: 14 }}>
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <b>{r.pageName}</b>
-                  <b>{fmtMoney(r.total)}</b>
+            {salesPages.map((r) => (
+              <div key={r.page} className="card" style={{ padding: 14 }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700 }}>{r.page}</div>
+                  <div style={{ opacity: 0.9 }}>{money(r.total)} / {money(r.goal || 0)}</div>
                 </div>
-                <div className="hr" style={{ margin: "10px 0" }} />
-                <div
-                  style={{
-                    height: 10,
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,.08)",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${Math.min(100, (r.total / Math.max(1, salesSummary?.total15 || 1)) * 100)}%`,
-                      background: "rgba(120,120,255,.7)",
-                    }}
-                  />
-                </div>
+                <div className="hr" />
+                <div className="small" style={{ opacity: 0.75 }}>—</div>
               </div>
             ))}
           </div>
-        ) : (
-          <p className="small">No sales found for this team (last 15 days).</p>
         )}
 
         <div className="hr" />
@@ -272,7 +233,7 @@ export default function DashboardPage() {
         <div className="spacer" />
 
         <div className="card" style={{ padding: 14 }}>
-          <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
             <span className="badge">Attendance day: {attSummary?.attendanceDay || "—"}</span>
             <span className="badge">Clocked in: {attSummary?.clockedIn || 0}</span>
             <span className="badge">Covers: {attSummary?.covers || 0}</span>
@@ -280,26 +241,27 @@ export default function DashboardPage() {
 
           <div className="spacer" />
 
-          <div className="row" style={{ fontWeight: 700, opacity: 0.9 }}>
+          <div className="row" style={{ fontWeight: 700, opacity: 0.85 }}>
             <div style={{ flex: 1 }}>Shift</div>
             <div style={{ flex: 2 }}>Page</div>
-            <div style={{ width: 110, textAlign: "right" }}>Clocked</div>
-            <div style={{ width: 110, textAlign: "right" }}>Covers</div>
+            <div style={{ width: 120, textAlign: "right" }}>Clocked</div>
+            <div style={{ width: 120, textAlign: "right" }}>Covers</div>
           </div>
-
           <div className="hr" />
 
-          {attPages?.rows?.length ? (
-            attPages.rows.map((r, idx) => (
-              <div key={idx} className="row" style={{ padding: "10px 0" }}>
-                <div style={{ flex: 1 }}>{r.shift}</div>
-                <div style={{ flex: 2 }}>{r.pageKey}</div>
-                <div style={{ width: 110, textAlign: "right" }}>{r.clockedIn}</div>
-                <div style={{ width: 110, textAlign: "right" }}>{r.covers}</div>
-              </div>
-            ))
-          ) : (
+          {attRows.length === 0 ? (
             <p className="small">No attendance rows found for today yet.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {attRows.map((r, idx) => (
+                <div key={`${r.pageKey}-${r.shift}-${idx}`} className="row" style={{ opacity: 0.95 }}>
+                  <div style={{ flex: 1 }}>{r.shift}</div>
+                  <div style={{ flex: 2 }}>{r.pageKey}</div>
+                  <div style={{ width: 120, textAlign: "right" }}>{r.clockedIn}</div>
+                  <div style={{ width: 120, textAlign: "right" }}>{r.covers}</div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
