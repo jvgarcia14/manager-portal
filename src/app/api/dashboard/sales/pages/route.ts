@@ -1,4 +1,3 @@
-// src/app/api/dashboard/sales/pages/route.ts
 import { NextResponse } from "next/server";
 import { salesDb } from "@/lib/db";
 
@@ -20,47 +19,61 @@ export async function GET(req: Request) {
   const client = await pool.connect();
 
   try {
-    // totals
+    // totals per page
     const salesRes = await client.query(
       `
-      SELECT page, COALESCE(SUM(amount), 0) AS total
+      SELECT page, COALESCE(SUM(amount), 0) AS sales
       FROM sales
       WHERE team = $1 AND ts >= $2
       GROUP BY page
-      ORDER BY total DESC
+      ORDER BY sales DESC
       `,
       [team, cutoff]
     );
 
-    // goals
+    // goals per page
     const goalsRes = await client.query(
       `
-      SELECT page, goal
+      SELECT page, COALESCE(goal, 0) AS goal
       FROM page_goals
       WHERE team = $1
       `,
       [team]
     );
 
-    const totals = new Map<string, number>();
-    for (const r of salesRes.rows) totals.set(String(r.page), Number(r.total || 0));
+    const salesMap = new Map<string, number>();
+    for (const r of salesRes.rows) salesMap.set(String(r.page), Number(r.sales || 0));
 
-    const goals = new Map<string, number>();
-    for (const r of goalsRes.rows) goals.set(String(r.page), Number(r.goal || 0));
+    const goalMap = new Map<string, number>();
+    for (const r of goalsRes.rows) goalMap.set(String(r.page), Number(r.goal || 0));
 
-    const allPages = new Set<string>([...totals.keys(), ...goals.keys()]);
+    const allPages = new Set<string>([...salesMap.keys(), ...goalMap.keys()]);
 
     const rows = [...allPages].map((page) => {
-      const total = Number(totals.get(page) ?? 0);
-      const goal = Number(goals.get(page) ?? 0);
-      return { page, total: Math.round(total * 100) / 100, goal: Math.round(goal * 100) / 100 };
+      const sales = Number(salesMap.get(page) ?? 0);
+      const goal = Number(goalMap.get(page) ?? 0);
+      const pct = goal > 0 ? Math.round((sales / goal) * 1000) / 10 : null;
+
+      return {
+        page,
+        sales: Math.round(sales * 100) / 100,
+        goal: Math.round(goal * 100) / 100,
+        pct,
+      };
     });
 
-    rows.sort((a, b) => b.total - a.total);
+    rows.sort((a, b) => b.sales - a.sales);
+
+    const total_sales = Math.round(rows.reduce((a, r) => a + r.sales, 0) * 100) / 100;
+    const total_goal = Math.round(rows.reduce((a, r) => a + r.goal, 0) * 100) / 100;
+    const overall_pct = total_goal > 0 ? Math.round((total_sales / total_goal) * 1000) / 10 : null;
 
     return NextResponse.json({
       team,
       days,
+      total_sales,
+      total_goal,
+      overall_pct,
       rows,
     });
   } catch (e: any) {
