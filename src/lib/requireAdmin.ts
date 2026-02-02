@@ -1,4 +1,3 @@
-// src/lib/requireAdmin.ts
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/serverAuthOptions";
 
