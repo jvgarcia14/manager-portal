@@ -10,10 +10,11 @@ export async function GET() {
 
   const db = attendanceDb();
 
+  // IMPORTANT: Update to match your attendance bot table.
+  // Assumes: attendance_clockins(attendance_day date, is_cover bool)
+  // Attendance day starts at 6:00 AM PH.
   const res = await db.query(`
-    WITH now_ph AS (
-      SELECT (now() AT TIME ZONE 'Asia/Manila') AS t
-    ),
+    WITH now_ph AS (SELECT (now() AT TIME ZONE 'Asia/Manila') AS t),
     att_day AS (
       SELECT CASE
         WHEN (SELECT t::time FROM now_ph) < time '06:00'
@@ -29,9 +30,9 @@ export async function GET() {
     WHERE attendance_day = (SELECT d FROM att_day);
   `);
 
-  const row = res.rows[0] || {};
+  const row = res.rows?.[0] ?? {};
   return NextResponse.json({
-    attendanceDay: row.attendance_day,
+    attendanceDay: row.attendance_day ? String(row.attendance_day) : null,
     clockedIn: Number(row.clocked_in ?? 0),
     covers: Number(row.covers ?? 0),
   });

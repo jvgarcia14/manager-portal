@@ -9,37 +9,35 @@ export async function GET(req: Request) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { searchParams } = new URL(req.url);
-  const team = searchParams.get("team");
-  if (!team) return NextResponse.json({ error: "Missing team" }, { status: 400 });
+  const team = searchParams.get("team") ?? "Black";
 
   const db = salesDb();
 
-  const last15Start = `
-    (date_trunc('day', (now() AT TIME ZONE 'Asia/Manila') - interval '14 days') AT TIME ZONE 'Asia/Manila')
-  `;
-
+  // IMPORTANT: Update table/columns to match your DB.
+  // Assumes: sales_logs(team, page, amount, created_at)
   const res = await db.query(
     `
+    WITH start_ph AS (
+      SELECT ((now() AT TIME ZONE 'Asia/Manila')::date - 14) AS d
+    )
     SELECT
-      s.page,
-      COALESCE(SUM(s.amount),0) AS total,
-      COALESCE(pg.goal, 0) AS goal
-    FROM sales s
-    LEFT JOIN page_goals pg ON pg.page = s.page
-    WHERE s.team = $1
-      AND s.ts >= ${last15Start}
-    GROUP BY s.page, pg.goal
+      page,
+      COALESCE(SUM(amount), 0) AS total
+    FROM sales_logs
+    WHERE team = $1
+      AND (created_at AT TIME ZONE 'Asia/Manila')::date >= (SELECT d FROM start_ph)
+    GROUP BY page
     ORDER BY total DESC
+    LIMIT 50
     `,
     [team]
   );
 
-  const pages = res.rows.map((r) => {
-    const total = Number(r.total ?? 0);
-    const goal = Number(r.goal ?? 0);
-    const pct = goal > 0 ? (total / goal) * 100 : null;
-    return { page: String(r.page), total, goal, pct };
-  });
+  const rows = res.rows.map((r: any) => ({
+    page: String(r.page),
+    total: Number(r.total ?? 0),
+    goal: null,
+  }));
 
-  return NextResponse.json({ team, pages });
+  return NextResponse.json({ rows });
 }

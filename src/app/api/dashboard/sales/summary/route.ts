@@ -9,36 +9,45 @@ export async function GET(req: Request) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { searchParams } = new URL(req.url);
-  const team = searchParams.get("team");
-  if (!team) return NextResponse.json({ error: "Missing team" }, { status: 400 });
+  const team = searchParams.get("team") ?? "Black";
 
   const db = salesDb();
 
-  const todayStart = `
-    (date_trunc('day', now() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila')
-  `;
-  const last15Start = `
-    (date_trunc('day', (now() AT TIME ZONE 'Asia/Manila') - interval '14 days') AT TIME ZONE 'Asia/Manila')
-  `;
+  // IMPORTANT: Update these table/column names to match your sales bot DB.
+  // This assumes a table sales_logs with: created_at, team, amount
+  // And "today" is based on Asia/Manila day boundary.
+  const resToday = await db.query(
+    `
+    WITH now_ph AS (
+      SELECT (now() AT TIME ZONE 'Asia/Manila') AS t
+    ),
+    day_ph AS (
+      SELECT (date_trunc('day', t))::date AS d FROM now_ph
+    )
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM sales_logs
+    WHERE team = $1
+      AND (created_at AT TIME ZONE 'Asia/Manila')::date = (SELECT d FROM day_ph)
+    `,
+    [team]
+  );
 
-  const [todayRes, last15Res] = await Promise.all([
-    db.query(
-      `SELECT COALESCE(SUM(amount),0) AS total
-       FROM sales
-       WHERE team=$1 AND ts >= ${todayStart}`,
-      [team]
-    ),
-    db.query(
-      `SELECT COALESCE(SUM(amount),0) AS total
-       FROM sales
-       WHERE team=$1 AND ts >= ${last15Start}`,
-      [team]
-    ),
-  ]);
+  const res15 = await db.query(
+    `
+    WITH start_ph AS (
+      SELECT ((now() AT TIME ZONE 'Asia/Manila')::date - 14) AS d
+    )
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM sales_logs
+    WHERE team = $1
+      AND (created_at AT TIME ZONE 'Asia/Manila')::date >= (SELECT d FROM start_ph)
+    `,
+    [team]
+  );
 
   return NextResponse.json({
     team,
-    today: Number(todayRes.rows[0]?.total ?? 0),
-    last15: Number(last15Res.rows[0]?.total ?? 0),
+    todaySales: Number(resToday.rows?.[0]?.total ?? 0),
+    totalSales15d: Number(res15.rows?.[0]?.total ?? 0),
   });
 }
