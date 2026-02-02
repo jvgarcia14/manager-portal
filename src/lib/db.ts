@@ -1,36 +1,53 @@
 import { Pool } from "pg";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __dbPools: Record<string, Pool> | undefined;
+let websitePool: Pool | null = null;
+let salesPool: Pool | null = null;
+let attendancePool: Pool | null = null;
+
+function mustGet(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
-function getPool(url: string, key: string) {
-  if (!global.__dbPools) global.__dbPools = {};
-  if (!global.__dbPools[key]) {
-    global.__dbPools[key] = new Pool({
-      connectionString: url,
+/**
+ * WEBSITE DB (users / approvals)
+ * env: WEBSITE_DATABASE_URL
+ */
+export function websiteDb() {
+  if (!websitePool) {
+    websitePool = new Pool({
+      connectionString: mustGet("WEBSITE_DATABASE_URL"),
       ssl: { rejectUnauthorized: false },
-      max: 5,
     });
   }
-  return global.__dbPools[key];
+  return websitePool;
 }
 
-export function appDb() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL not set");
-  return getPool(url, "app");
-}
-
+/**
+ * SALES DB (sales bot)
+ * env: SALES_DATABASE_URL
+ */
 export function salesDb() {
-  const url = process.env.SALES_DATABASE_URL || process.env.DATABASE_URL;
-  if (!url) throw new Error("SALES_DATABASE_URL (or DATABASE_URL) not set");
-  return getPool(url, "sales");
+  if (!salesPool) {
+    salesPool = new Pool({
+      connectionString: mustGet("SALES_DATABASE_URL"),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
+  return salesPool;
 }
 
+/**
+ * ATTENDANCE DB (attendance bot)
+ * env: ATTENDANCE_DATABASE_URL
+ */
 export function attendanceDb() {
-  const url = process.env.ATTENDANCE_DATABASE_URL || process.env.DATABASE_URL;
-  if (!url) throw new Error("ATTENDANCE_DATABASE_URL (or DATABASE_URL) not set");
-  return getPool(url, "attendance");
+  if (!attendancePool) {
+    attendancePool = new Pool({
+      connectionString: mustGet("ATTENDANCE_DATABASE_URL"),
+      ssl: { rejectUnauthorized: false },
+    });
+  }
+  return attendancePool;
 }
