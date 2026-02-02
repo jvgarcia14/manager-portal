@@ -1,3 +1,4 @@
+// src/app/api/dashboard/sales/pages/route.ts
 import { NextResponse } from "next/server";
 import { salesDb } from "@/lib/db";
 
@@ -15,11 +16,19 @@ export async function GET(req: Request) {
 
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
+  // PH "today" start (00:00 PH) converted to UTC Date
+  const now = new Date();
+  const phNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+  const phStart = new Date(phNow);
+  phStart.setHours(0, 0, 0, 0);
+  // convert PH start to UTC instant:
+  const phStartUtc = new Date(phStart.getTime() - (phNow.getTime() - now.getTime()));
+
   const pool = salesDb();
   const client = await pool.connect();
 
   try {
-    // ✅ keep alias "total" because your UI expects it
+    // rows (by page) within days
     const salesRes = await client.query(
       `
       SELECT page, COALESCE(SUM(amount), 0) AS total
@@ -31,9 +40,30 @@ export async function GET(req: Request) {
       [team, cutoff]
     );
 
+    // total within days
+    const totalRes = await client.query(
+      `
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM sales
+      WHERE team = $1 AND ts >= $2
+      `,
+      [team, cutoff]
+    );
+
+    // today total (PH day)
+    const todayRes = await client.query(
+      `
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM sales
+      WHERE team = $1 AND ts >= $2
+      `,
+      [team, phStartUtc]
+    );
+
+    // goals
     const goalsRes = await client.query(
       `
-      SELECT page, COALESCE(goal, 0) AS goal
+      SELECT page, goal
       FROM page_goals
       WHERE team = $1
       `,
@@ -48,34 +78,23 @@ export async function GET(req: Request) {
 
     const allPages = new Set<string>([...totals.keys(), ...goals.keys()]);
 
-    // ✅ rows include BOTH total (old) + sales (new)
     const rows = [...allPages].map((page) => {
       const total = Number(totals.get(page) ?? 0);
       const goal = Number(goals.get(page) ?? 0);
-      const pct = goal > 0 ? Math.round((total / goal) * 1000) / 10 : null;
-
-      return {
-        page,
-        total: Math.round(total * 100) / 100,  // OLD (UI uses this)
-        sales: Math.round(total * 100) / 100,  // NEW (optional)
-        goal: Math.round(goal * 100) / 100,
-        pct,
-      };
+      return { page, total: Math.round(total * 100) / 100, goal: Math.round(goal * 100) / 100 };
     });
 
     rows.sort((a, b) => b.total - a.total);
 
-    const total_sales = Math.round(rows.reduce((a, r) => a + r.total, 0) * 100) / 100;
-    const total_goal = Math.round(rows.reduce((a, r) => a + r.goal, 0) * 100) / 100;
-    const overall_pct = total_goal > 0 ? Math.round((total_sales / total_goal) * 1000) / 10 : null;
+    const totalSales = Number(totalRes.rows?.[0]?.total || 0);
+    const todaySales = Number(todayRes.rows?.[0]?.total || 0);
 
     return NextResponse.json({
       team,
       days,
-      total_sales,   // ✅ new
-      total_goal,    // ✅ new
-      overall_pct,   // ✅ new
-      rows,          // ✅ still compatible because rows[].total exists
+      todaySales: Math.round(todaySales * 100) / 100,
+      totalSales: Math.round(totalSales * 100) / 100,
+      rows,
     });
   } catch (e: any) {
     return NextResponse.json(

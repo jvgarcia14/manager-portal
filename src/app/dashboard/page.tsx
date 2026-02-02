@@ -1,3 +1,4 @@
+// src/app/dashboard/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -27,15 +28,21 @@ export default function DashboardPage() {
   const [teams, setTeams] = useState<string[]>([]);
   const [team, setTeam] = useState<string>("");
 
+  // ✅ KPIs
   const [salesSummary, setSalesSummary] = useState<{ today: number; total15d: number } | null>(null);
+
   const [salesPages, setSalesPages] = useState<SalesPageRow[]>([]);
-  const [attSummary, setAttSummary] = useState<{ attendanceDay: string; clockedIn: number; covers: number } | null>(null);
+  const [attSummary, setAttSummary] = useState<{ attendanceDay: string; clockedIn: number; covers: number } | null>(
+    null
+  );
   const [attRows, setAttRows] = useState<AttendanceRow[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
 
-  const teamDisplay = useMemo(() => team || (teams[0] || ""), [team, teams]);
+  const teamDisplay = useMemo(() => team || teams[0] || "", [team, teams]);
 
+  // load team list (pills)
   useEffect(() => {
     if (!session) return;
     if (userStatus !== "approved") return;
@@ -52,6 +59,7 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, userStatus]);
 
+  // load dashboard data
   useEffect(() => {
     if (!session) return;
     if (userStatus !== "approved") return;
@@ -62,17 +70,29 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        const [ss, sp, as, ap] = await Promise.all([
-          safeJson(`/api/dashboard/sales/summary?team=${encodeURIComponent(teamDisplay)}`),
-          safeJson(`/api/dashboard/sales/pages?team=${encodeURIComponent(teamDisplay)}`),
+        // ✅ IMPORTANT:
+        // We no longer call /sales/summary
+        // /sales/pages now returns: { todaySales, totalSales, rows }
+        const [sp, as, ap] = await Promise.all([
+          safeJson(`/api/dashboard/sales/pages?team=${encodeURIComponent(teamDisplay)}&days=15`),
           safeJson(`/api/dashboard/attendance/summary`),
           safeJson(`/api/dashboard/attendance/pages`),
         ]);
 
-        setSalesSummary({ today: ss.today || 0, total15d: ss.total15d || 0 });
-        setSalesPages(sp.rows || []);
-        setAttSummary({ attendanceDay: as.attendanceDay || "", clockedIn: as.clockedIn || 0, covers: as.covers || 0 });
-        setAttRows(ap.rows || []);
+        setSalesSummary({
+          today: Number(sp?.todaySales || 0),
+          total15d: Number(sp?.totalSales || 0),
+        });
+
+        setSalesPages(sp?.rows || []);
+
+        setAttSummary({
+          attendanceDay: String(as?.attendanceDay || ""),
+          clockedIn: Number(as?.clockedIn || 0),
+          covers: Number(as?.covers || 0),
+        });
+
+        setAttRows(ap?.rows || []);
       } catch (e: any) {
         setErr(e.message || "Failed to load dashboard data");
       } finally {
@@ -81,6 +101,7 @@ export default function DashboardPage() {
     })();
   }, [session, userStatus, teamDisplay]);
 
+  // UI states
   if (status === "loading") {
     return (
       <div className="container">
@@ -96,7 +117,9 @@ export default function DashboardPage() {
           <h1 className="h1">Not signed in</h1>
           <p className="small">Go to /intro and sign in with Google.</p>
           <div className="spacer" />
-          <a className="btn btnPrimary" href="/intro">Go to Intro</a>
+          <a className="btn btnPrimary" href="/intro">
+            Go to Intro
+          </a>
         </div>
       </div>
     );
@@ -109,8 +132,12 @@ export default function DashboardPage() {
           <h1 className="h1">Awaiting approval</h1>
           <p className="small">Your account is pending admin approval.</p>
           <div className="spacer" />
-          <a className="btn" href="/intro">Back to Intro</a>
-          <button className="btn" onClick={() => signOut()}>Sign out</button>
+          <a className="btn" href="/intro">
+            Back to Intro
+          </a>
+          <button className="btn" onClick={() => signOut()}>
+            Sign out
+          </button>
         </div>
       </div>
     );
@@ -129,7 +156,9 @@ export default function DashboardPage() {
         <div className="row" style={{ gap: 10 }}>
           <span className="badge">{session.user?.email}</span>
           <span className="badge">Role: {role}</span>
-          <button className="btn" onClick={() => signOut()}>Sign out</button>
+          <button className="btn" onClick={() => signOut()}>
+            Sign out
+          </button>
         </div>
       </div>
 
@@ -138,7 +167,9 @@ export default function DashboardPage() {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
           <div>
-            <h1 className="h1" style={{ marginBottom: 6 }}>Sales Dashboard</h1>
+            <h1 className="h1" style={{ marginBottom: 6 }}>
+              Sales Dashboard
+            </h1>
             <p className="small">Live read-only view from Sales + Attendance Postgres. Built for internal demo.</p>
           </div>
           <span className="badge">{loading ? "Refreshing…" : "Live"}</span>
@@ -172,7 +203,9 @@ export default function DashboardPage() {
               <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>
                 Error: {err}
               </p>
-              <p className="small">If this is DB-related, re-check Railway variables: SALES_DATABASE_URL and ATTENDANCE_DATABASE_URL.</p>
+              <p className="small">
+                If this is DB-related, re-check Railway variables: SALES_DATABASE_URL and ATTENDANCE_DATABASE_URL.
+              </p>
             </div>
           </>
         ) : null}
@@ -186,11 +219,13 @@ export default function DashboardPage() {
             <p className="kpiValue">{money(salesSummary?.today || 0)}</p>
             <p className="small">Team: {teamDisplay}</p>
           </div>
+
           <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">Total Sales (15d)</p>
             <p className="kpiValue">{money(salesSummary?.total15d || 0)}</p>
             <p className="small">Rolling last 15 days</p>
           </div>
+
           <div className="kpi" style={{ flex: 1 }}>
             <p className="kpiTitle">On shift (today)</p>
             <p className="kpiValue">{attSummary?.clockedIn || 0}</p>
@@ -213,10 +248,14 @@ export default function DashboardPage() {
               <div key={r.page} className="card" style={{ padding: 14 }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontWeight: 700 }}>{r.page}</div>
-                  <div style={{ opacity: 0.9 }}>{money(r.total)} / {money(r.goal || 0)}</div>
+                  <div style={{ opacity: 0.9 }}>
+                    {money(r.total)} / {money(r.goal || 0)}
+                  </div>
                 </div>
                 <div className="hr" />
-                <div className="small" style={{ opacity: 0.75 }}>—</div>
+                <div className="small" style={{ opacity: 0.75 }}>
+                  —
+                </div>
               </div>
             ))}
           </div>
