@@ -3,25 +3,44 @@
 import { signIn, useSession } from "next-auth/react";
 
 export default function IntroPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
 
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Tasty Media</h1>
-      <p>Internal manager portal.</p>
+    <main style={{ padding: 40, fontFamily: "Arial, sans-serif" }}>
+      <h1 style={{ marginBottom: 8 }}>Tasty Media</h1>
+      <p style={{ marginTop: 0, marginBottom: 24 }}>Internal manager portal.</p>
 
-      {!session && (
-        <button onClick={() => signIn("google")}>
+      {status === "loading" && <p>Loading...</p>}
+
+      {status !== "loading" && !session && (
+        <button
+          onClick={() => signIn("google")}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 8,
+            border: "1px solid #ccc",
+            cursor: "pointer",
+            fontSize: 14,
+          }}
+        >
           Sign in with Google
         </button>
       )}
 
-      {session && (session as any).status !== "approved" && (
-        <p>⏳ Your account is awaiting admin approval.</p>
-      )}
+      {session && (
+        <div style={{ marginTop: 16 }}>
+          <p>
+            Signed in as: <b>{session.user?.email}</b>
+          </p>
 
-      {session && (session as any).status === "approved" && (
-        <a href="/dashboard">Go to dashboard</a>
+          {(session as any).status !== "approved" && (
+            <p>⏳ Your account is awaiting admin approval.</p>
+          )}
+
+          {(session as any).status === "approved" && (
+            <a href="/dashboard">Go to dashboard</a>
+          )}
+        </div>
       )}
     </main>
   );
