@@ -19,19 +19,18 @@ export async function GET(req: Request) {
   const client = await pool.connect();
 
   try {
-    // totals per page
+    // ✅ keep alias "total" because your UI expects it
     const salesRes = await client.query(
       `
-      SELECT page, COALESCE(SUM(amount), 0) AS sales
+      SELECT page, COALESCE(SUM(amount), 0) AS total
       FROM sales
       WHERE team = $1 AND ts >= $2
       GROUP BY page
-      ORDER BY sales DESC
+      ORDER BY total DESC
       `,
       [team, cutoff]
     );
 
-    // goals per page
     const goalsRes = await client.query(
       `
       SELECT page, COALESCE(goal, 0) AS goal
@@ -41,40 +40,42 @@ export async function GET(req: Request) {
       [team]
     );
 
-    const salesMap = new Map<string, number>();
-    for (const r of salesRes.rows) salesMap.set(String(r.page), Number(r.sales || 0));
+    const totals = new Map<string, number>();
+    for (const r of salesRes.rows) totals.set(String(r.page), Number(r.total || 0));
 
-    const goalMap = new Map<string, number>();
-    for (const r of goalsRes.rows) goalMap.set(String(r.page), Number(r.goal || 0));
+    const goals = new Map<string, number>();
+    for (const r of goalsRes.rows) goals.set(String(r.page), Number(r.goal || 0));
 
-    const allPages = new Set<string>([...salesMap.keys(), ...goalMap.keys()]);
+    const allPages = new Set<string>([...totals.keys(), ...goals.keys()]);
 
+    // ✅ rows include BOTH total (old) + sales (new)
     const rows = [...allPages].map((page) => {
-      const sales = Number(salesMap.get(page) ?? 0);
-      const goal = Number(goalMap.get(page) ?? 0);
-      const pct = goal > 0 ? Math.round((sales / goal) * 1000) / 10 : null;
+      const total = Number(totals.get(page) ?? 0);
+      const goal = Number(goals.get(page) ?? 0);
+      const pct = goal > 0 ? Math.round((total / goal) * 1000) / 10 : null;
 
       return {
         page,
-        sales: Math.round(sales * 100) / 100,
+        total: Math.round(total * 100) / 100,  // OLD (UI uses this)
+        sales: Math.round(total * 100) / 100,  // NEW (optional)
         goal: Math.round(goal * 100) / 100,
         pct,
       };
     });
 
-    rows.sort((a, b) => b.sales - a.sales);
+    rows.sort((a, b) => b.total - a.total);
 
-    const total_sales = Math.round(rows.reduce((a, r) => a + r.sales, 0) * 100) / 100;
+    const total_sales = Math.round(rows.reduce((a, r) => a + r.total, 0) * 100) / 100;
     const total_goal = Math.round(rows.reduce((a, r) => a + r.goal, 0) * 100) / 100;
     const overall_pct = total_goal > 0 ? Math.round((total_sales / total_goal) * 1000) / 10 : null;
 
     return NextResponse.json({
       team,
       days,
-      total_sales,
-      total_goal,
-      overall_pct,
-      rows,
+      total_sales,   // ✅ new
+      total_goal,    // ✅ new
+      overall_pct,   // ✅ new
+      rows,          // ✅ still compatible because rows[].total exists
     });
   } catch (e: any) {
     return NextResponse.json(
