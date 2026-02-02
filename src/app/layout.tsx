@@ -1,9 +1,9 @@
 import "./globals.css";
-import Providers from "./session-provider";
+import SessionProvider from "./session-provider";
 
 export const metadata = {
-  title: "Tasty Media | Manager Portal",
-  description: "Internal manager portal",
+  title: "Tasty Media – Manager Portal",
+  description: "Internal dashboard for sales & attendance monitoring",
 };
 
 export default function RootLayout({
@@ -14,7 +14,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <SessionProvider>{children}</SessionProvider>
       </body>
     </html>
   );
