@@ -1,22 +1,37 @@
-const isAdmin = process.env.ADMIN_EMAILS
-  ?.split(",")
-  .map(e => e.trim().toLowerCase())
-  .includes(user.email.toLowerCase());
+import "server-only";
+import { Pool } from "pg";
 
-await websitePool.query(
-  `
-  INSERT INTO web_users (email, name, status, role)
-  VALUES ($1, $2, $3, $4)
-  ON CONFLICT (email)
-  DO UPDATE SET
-    last_login_at = now(),
-    status = EXCLUDED.status,
-    role = EXCLUDED.role
-  `,
-  [
-    user.email.toLowerCase(),
-    user.name ?? null,
-    isAdmin ? "approved" : "pending",
-    isAdmin ? "admin" : "manager",
-  ]
-);
+const connectionString = process.env.WEBSITE_DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("WEBSITE_DATABASE_URL is not set");
+}
+
+export const websitePool = new Pool({
+  connectionString,
+  ssl: { rejectUnauthorized: false },
+});
+
+let schemaReady = false;
+
+/**
+ * Auto-creates required tables in the Website DB.
+ * Safe to call multiple times; runs once per server instance.
+ */
+export async function ensureWebsiteSchema() {
+  if (schemaReady) return;
+
+  await websitePool.query(`
+    CREATE TABLE IF NOT EXISTS web_users (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL DEFAULT 'manager',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_login_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+
+  schemaReady = true;
+}

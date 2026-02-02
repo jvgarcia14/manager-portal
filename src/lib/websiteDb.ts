@@ -15,8 +15,8 @@ export const websitePool = new Pool({
 let schemaReady = false;
 
 /**
- * Ensures required tables exist.
- * Safe to call multiple times; runs only once per server instance.
+ * Auto-creates required tables in the Website DB.
+ * Safe to call multiple times; runs once per server instance.
  */
 export async function ensureWebsiteSchema() {
   if (schemaReady) return;
@@ -29,7 +29,7 @@ export async function ensureWebsiteSchema() {
       role TEXT NOT NULL DEFAULT 'manager',
       status TEXT NOT NULL DEFAULT 'pending',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      last_login_at TIMESTAMPTZ
+      last_login_at TIMESTAMPTZ DEFAULT now()
     );
   `);
 
