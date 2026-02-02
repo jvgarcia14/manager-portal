@@ -10,35 +10,27 @@ function mustGet(name: string) {
   return v;
 }
 
-// WEBSITE DB (users/approvals)
+function makePool(connectionString: string) {
+  return new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+  });
+}
+
+// WEBSITE DB (approvals/users)
 export function websiteDb() {
-  if (!websitePool) {
-    websitePool = new Pool({
-      connectionString: mustGet("WEBSITE_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!websitePool) websitePool = makePool(mustGet("WEBSITE_DATABASE_URL"));
   return websitePool;
 }
 
 // SALES DB (sales bot)
 export function salesDb() {
-  if (!salesPool) {
-    salesPool = new Pool({
-      connectionString: mustGet("SALES_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!salesPool) salesPool = makePool(mustGet("SALES_DATABASE_URL"));
   return salesPool;
 }
 
 // ATTENDANCE DB (attendance bot)
 export function attendanceDb() {
-  if (!attendancePool) {
-    attendancePool = new Pool({
-      connectionString: mustGet("ATTENDANCE_DATABASE_URL"),
-      ssl: { rejectUnauthorized: false },
-    });
-  }
+  if (!attendancePool) attendancePool = makePool(mustGet("ATTENDANCE_DATABASE_URL"));
   return attendancePool;
 }

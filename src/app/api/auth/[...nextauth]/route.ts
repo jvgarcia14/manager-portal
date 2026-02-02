@@ -2,8 +2,6 @@ import NextAuth, { type NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { websiteDb } from "@/lib/db";
 
-export const runtime = "nodejs";
-
 function parseAdminEmails(v?: string) {
   return (v || "")
     .split(",")
@@ -11,80 +9,51 @@ function parseAdminEmails(v?: string) {
     .filter(Boolean);
 }
 
-async function ensureUserRow(email: string) {
-  const db = websiteDb();
-
-  // Create table if not exists (safe for demo)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS portal_users (
-      email TEXT PRIMARY KEY,
-      status TEXT NOT NULL DEFAULT 'pending',
-      role   TEXT NOT NULL DEFAULT 'user',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-
-  const existing = await db.query(
-    `SELECT email, status, role FROM portal_users WHERE email=$1 LIMIT 1`,
-    [email]
-  );
-
-  if (existing.rows.length === 0) {
-    await db.query(
-      `INSERT INTO portal_users (email, status, role) VALUES ($1, 'pending', 'user')`,
-      [email]
-    );
-    return { status: "pending", role: "user" };
-  }
-
-  return {
-    status: String(existing.rows[0].status || "pending"),
-    role: String(existing.rows[0].role || "user"),
-  };
-}
-
+// ✅ Export this so requireApproved.ts can import it
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
     }),
   ],
-  session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
-
+  session: { strategy: "jwt" },
   callbacks: {
-    async jwt({ token, user }) {
-      // persist email into token
-      if (user?.email) token.email = user.email;
+    async jwt({ token, account, profile }) {
+      // keep email on token
+      if (profile?.email) token.email = profile.email;
       return token;
     },
-
     async session({ session, token }) {
       const email = String(token.email || session.user?.email || "").toLowerCase();
-      const admins = parseAdminEmails(process.env.ADMIN_EMAILS);
+      (session.user as any).email = email;
 
-      // Default
+      // default
       (session as any).status = "pending";
       (session as any).role = "user";
 
-      if (!email) return session;
-
-      // Admin override from Railway ENV
+      // ✅ Admin override via env var
+      const admins = parseAdminEmails(process.env.ADMIN_EMAILS);
       if (admins.includes(email)) {
         (session as any).status = "approved";
         (session as any).role = "admin";
         return session;
       }
 
-      // Otherwise read approval from website DB
+      // ✅ Otherwise check approval from WEBSITE DB
+      // Expected table: portal_users(email text unique, status text)
+      // If your table name differs, update here.
       try {
-        const row = await ensureUserRow(email);
-        (session as any).status = row.status;
-        (session as any).role = row.role;
+        const db = websiteDb();
+        const r = await db.query(
+          `SELECT status FROM portal_users WHERE lower(email)=lower($1) LIMIT 1`,
+          [email]
+        );
+        const status = String(r.rows?.[0]?.status || "pending").toLowerCase();
+        (session as any).status = status; // "pending" | "approved"
       } catch {
-        // If DB down, stay pending (safe)
+        // if DB not ready, keep pending (safe)
       }
 
       return session;
