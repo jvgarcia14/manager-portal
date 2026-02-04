@@ -8,8 +8,10 @@ import { useSession, signOut } from "next-auth/react";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const pathname = usePathname();
+
   const s: any = session;
-  const role = (s?.role || "user") as string;
+  const role = String(s?.role || "user");
+  const isAdmin = role.toLowerCase() === "admin";
 
   const tabStyle = (active: boolean) => ({
     borderRadius: 999,
@@ -19,10 +21,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     background: "transparent",
   });
 
-  // ✅ helper: active if exact OR startsWith for subpages
+  // ✅ active if exact OR subpages
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
-
-  const isAdmin = role === "admin";
 
   return (
     <div className="container">
@@ -57,14 +57,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           Attendance
         </Link>
 
-        {/* ✅ Admin-only */}
+        {/* ✅ Everyone can access roster (editable by any approved user) */}
+        <Link
+          href="/dashboard/roster"
+          className="btn"
+          style={tabStyle(isActive("/dashboard/roster")) as any}
+        >
+          Roster
+        </Link>
+
+        {/* ✅ Admin page shortcut (admin only) */}
         {isAdmin ? (
-          <Link
-            href="/dashboard/roster"
-            className="btn"
-            style={tabStyle(isActive("/dashboard/roster")) as any}
-          >
-            Roster
+          <Link href="/admin" className="btn" style={tabStyle(isActive("/admin")) as any}>
+            Admin
           </Link>
         ) : null}
       </div>

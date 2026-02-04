@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
+import { requireApproved } from "@/lib/requireApproved";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,7 +26,11 @@ async function ensureTables() {
   `);
 }
 
+// ✅ Approved users can view teams
 export async function GET() {
+  const gate = await requireApproved();
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
+
   try {
     await ensureTables();
     const db = websiteDb();
@@ -36,9 +41,14 @@ export async function GET() {
   }
 }
 
+// ✅ Approved users can create teams
 export async function POST(req: Request) {
+  const gate = await requireApproved();
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
+
   try {
     await ensureTables();
+
     const body = await req.json().catch(() => ({}));
     const name = String(body?.name || "").trim();
 
