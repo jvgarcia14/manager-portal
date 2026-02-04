@@ -29,56 +29,42 @@ export const authOptions: NextAuthOptions = {
 
       const isAdmin = ADMIN_EMAILS.includes(email);
 
-      try {
-        const db = websiteDb();
+      const db = websiteDb();
 
-        // ✅ Ensure row exists, always refresh updated_at
-        await db.query(
-          `
-          INSERT INTO web_users (email, name, role, status, created_at, updated_at)
-          VALUES ($1, $2, $3, 'pending', now(), now())
-          ON CONFLICT (email)
-          DO UPDATE SET
-            name = COALESCE(EXCLUDED.name, web_users.name),
-            role = CASE
-              WHEN web_users.role = 'admin' THEN 'admin'
-              ELSE EXCLUDED.role
-            END,
-            updated_at = now()
-          `,
-          [email, user.name || null, isAdmin ? "admin" : "user"]
-        );
+      // IMPORTANT: do not let sign-in succeed if DB write fails
+      await db.query(
+        `
+        INSERT INTO web_users (email, name, role, status)
+        VALUES ($1, $2, $3, 'pending')
+        ON CONFLICT (email)
+        DO UPDATE SET
+          name = COALESCE(EXCLUDED.name, web_users.name),
+          role = CASE
+            WHEN web_users.role = 'admin' THEN 'admin'
+            ELSE EXCLUDED.role
+          END
+        `,
+        [email, user.name || null, isAdmin ? "admin" : "user"]
+      );
 
-        console.log("[auth] signIn ok:", email, isAdmin ? "admin" : "user");
-        return true;
-      } catch (err) {
-        console.error("[auth] signIn DB error:", err);
-        return false; // fail fast so you notice DB misconfig
-      }
+      return true;
     },
 
     async jwt({ token, user }) {
-      // ✅ IMPORTANT: token.email not guaranteed unless we set it
+      // ✅ ensure token.email exists on first sign-in
       if (user?.email) token.email = user.email;
 
-      const email = normEmail(token.email as string);
+      const email = normEmail(token.email as any);
       if (!email) return token;
 
-      try {
-        const db = websiteDb();
-        const res = await db.query(
-          `SELECT role, status FROM web_users WHERE email = $1 LIMIT 1`,
-          [email]
-        );
+      const db = websiteDb();
+      const res = await db.query(
+        `SELECT role, status FROM web_users WHERE email = $1 LIMIT 1`,
+        [email]
+      );
 
-        (token as any).role = res.rows[0]?.role || "user";
-        (token as any).status = res.rows[0]?.status || "pending";
-      } catch (err) {
-        console.error("[auth] jwt DB error:", err);
-        (token as any).role = (token as any).role || "user";
-        (token as any).status = (token as any).status || "pending";
-      }
-
+      (token as any).role = res.rows[0]?.role || "user";
+      (token as any).status = res.rows[0]?.status || "pending";
       return token;
     },
 
