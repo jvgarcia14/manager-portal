@@ -14,23 +14,42 @@ export async function GET(req: Request) {
 
   const db = websiteDb();
 
-  const where =
-    status === "all"
-      ? ""
-      : status === "approved"
-        ? "WHERE status='approved'"
-        : "WHERE status IS NULL OR status='pending'";
+  try {
+    let whereSql = "";
+    const params: any[] = [];
 
-  const res = await db.query(
-    `
-    SELECT email, status, role, created_at
-    FROM web_users
-    ${where}
-    ORDER BY created_at DESC
-    `
-  );
+    if (status === "approved") {
+      whereSql = "WHERE status = $1";
+      params.push("approved");
+    } else if (status === "pending") {
+      // pending includes NULL or 'pending'
+      whereSql = "WHERE status IS NULL OR status = $1";
+      params.push("pending");
+    } else if (status === "all") {
+      whereSql = "";
+    } else {
+      // fallback -> treat unknown as pending
+      whereSql = "WHERE status IS NULL OR status = $1";
+      params.push("pending");
+    }
 
-  return NextResponse.json({ rows: res.rows || [] });
+    const res = await db.query(
+      `
+      SELECT email, name, status, role, created_at
+      FROM web_users
+      ${whereSql}
+      ORDER BY created_at DESC NULLS LAST, email ASC
+      `,
+      params
+    );
+
+    return NextResponse.json({ rows: res.rows || [] });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Failed to load users" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function PATCH(req: Request) {
@@ -39,24 +58,40 @@ export async function PATCH(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const email = String(body.email || "").toLowerCase().trim();
-  const action = String(body.action || "");
+  const action = String(body.action || "").toLowerCase();
 
   if (!email) return NextResponse.json({ error: "email required" }, { status: 400 });
 
   const db = websiteDb();
 
-  if (action === "approve") {
-    const r = await db.query(`UPDATE web_users SET status='approved' WHERE email=$1`, [email]);
-    if ((r.rowCount || 0) === 0) {
-      return NextResponse.json({ error: "user not found in web_users" }, { status: 404 });
+  try {
+    if (action === "approve") {
+      const r = await db.query(
+        `
+        UPDATE web_users
+        SET status = 'approved',
+            updated_at = now()
+        WHERE email = $1
+        `,
+        [email]
+      );
+
+      if ((r.rowCount || 0) === 0) {
+        return NextResponse.json({ error: "user not found in web_users" }, { status: 404 });
+      }
+      return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ ok: true });
-  }
 
-  if (action === "reject") {
-    await db.query(`DELETE FROM web_users WHERE email=$1`, [email]);
-    return NextResponse.json({ ok: true });
-  }
+    if (action === "reject") {
+      await db.query(`DELETE FROM web_users WHERE email = $1`, [email]);
+      return NextResponse.json({ ok: true });
+    }
 
-  return NextResponse.json({ error: "invalid action" }, { status: 400 });
+    return NextResponse.json({ error: "invalid action" }, { status: 400 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Failed to update user" },
+      { status: 500 }
+    );
+  }
 }

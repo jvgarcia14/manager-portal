@@ -8,6 +8,10 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 
+function normEmail(email?: string | null) {
+  return String(email || "").toLowerCase().trim();
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
@@ -20,43 +24,61 @@ export const authOptions: NextAuthOptions = {
 
   callbacks: {
     async signIn({ user }) {
-      const email = (user.email || "").toLowerCase().trim();
+      const email = normEmail(user.email);
       if (!email) return false;
 
-      const db = websiteDb();
       const isAdmin = ADMIN_EMAILS.includes(email);
 
-      // Ensure web_users row exists (default pending)
-      await db.query(
-        `
-        INSERT INTO web_users (email, name, role, status)
-        VALUES ($1, $2, $3, 'pending')
-        ON CONFLICT (email)
-        DO UPDATE SET
-          name = COALESCE(EXCLUDED.name, web_users.name),
-          role = CASE
-            WHEN web_users.role = 'admin' THEN 'admin'
-            ELSE EXCLUDED.role
-          END
-        `,
-        [email, user.name || null, isAdmin ? "admin" : "user"]
-      );
+      try {
+        const db = websiteDb();
 
-      return true;
+        // Ensure web_users row exists (default pending)
+        await db.query(
+          `
+          INSERT INTO web_users (email, name, role, status)
+          VALUES ($1, $2, $3, 'pending')
+          ON CONFLICT (email)
+          DO UPDATE SET
+            name = COALESCE(EXCLUDED.name, web_users.name),
+            role = CASE
+              WHEN web_users.role = 'admin' THEN 'admin'
+              ELSE EXCLUDED.role
+            END
+          `,
+          [email, user.name || null, isAdmin ? "admin" : "user"]
+        );
+
+        console.log("[auth] signIn ok:", email, isAdmin ? "admin" : "user");
+        return true;
+      } catch (err) {
+        console.error("[auth] signIn DB error:", err);
+        // If you return true here, user can login but won't appear in admin.
+        // Better to fail so you notice immediately.
+        return false;
+      }
     },
 
-    async jwt({ token }) {
-      const email = String(token.email || "").toLowerCase().trim();
+    async jwt({ token, user }) {
+      // ✅ IMPORTANT: ensure token.email exists on first sign-in
+      if (user?.email) token.email = user.email;
+
+      const email = normEmail(token.email as string);
       if (!email) return token;
 
-      const db = websiteDb();
-      const res = await db.query(
-        `SELECT role, status FROM web_users WHERE email = $1 LIMIT 1`,
-        [email]
-      );
+      try {
+        const db = websiteDb();
+        const res = await db.query(
+          `SELECT role, status FROM web_users WHERE email = $1 LIMIT 1`,
+          [email]
+        );
 
-      (token as any).role = res.rows[0]?.role || "user";
-      (token as any).status = res.rows[0]?.status || "pending";
+        (token as any).role = res.rows[0]?.role || "user";
+        (token as any).status = res.rows[0]?.status || "pending";
+      } catch (err) {
+        console.error("[auth] jwt DB error:", err);
+        (token as any).role = (token as any).role || "user";
+        (token as any).status = (token as any).status || "pending";
+      }
 
       return token;
     },
