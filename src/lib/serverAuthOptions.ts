@@ -1,4 +1,3 @@
-// src/lib/serverAuthOptions.ts
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { websiteDb } from "@/lib/db";
@@ -32,7 +31,7 @@ export const authOptions: NextAuthOptions = {
       try {
         const db = websiteDb();
 
-        // IMPORTANT: requires UNIQUE(email) in web_users
+        // ✅ Make sure the row exists
         await db.query(
           `
           INSERT INTO web_users (email, name, role, status)
@@ -48,62 +47,38 @@ export const authOptions: NextAuthOptions = {
           [email, user.name || null, isAdmin ? "admin" : "user"]
         );
 
+        console.log("[auth] web_users upsert OK:", email);
         return true;
-      } catch (err) {
-        // If DB insert fails, user won’t appear in admin.
-        // You can keep it false (strict) OR true (allow login).
-        console.error("[auth] signIn DB error:", err);
-        return true; // allow login, jwt() will attempt to self-heal too
+      } catch (err: any) {
+        // ✅ THIS is what will tell us the real reason in Railway logs
+        console.error("[auth] web_users upsert FAILED:", err?.message || err, err);
+        return false; // better to fail than silently not insert
       }
     },
 
     async jwt({ token, user }) {
-      // Ensure token.email exists on first login
+      // ✅ IMPORTANT: first login, ensure token.email exists
       if (user?.email) token.email = user.email;
 
       const email = normEmail(token.email as string);
       if (!email) return token;
 
-      const isAdmin = ADMIN_EMAILS.includes(email);
-      const db = websiteDb();
-
       try {
-        // 1) Try read
+        const db = websiteDb();
         const res = await db.query(
           `SELECT role, status FROM web_users WHERE email=$1 LIMIT 1`,
           [email]
         );
 
-        // 2) If missing, create it (SELF-HEAL)
-        if (!res.rows?.length) {
-          await db.query(
-            `
-            INSERT INTO web_users (email, name, role, status)
-            VALUES ($1, $2, $3, 'pending')
-            ON CONFLICT (email) DO NOTHING
-            `,
-            [email, (token.name as string) || null, isAdmin ? "admin" : "user"]
-          );
-
-          const res2 = await db.query(
-            `SELECT role, status FROM web_users WHERE email=$1 LIMIT 1`,
-            [email]
-          );
-
-          (token as any).role = res2.rows[0]?.role || (isAdmin ? "admin" : "user");
-          (token as any).status = res2.rows[0]?.status || "pending";
-          return token;
-        }
-
-        (token as any).role = res.rows[0]?.role || (isAdmin ? "admin" : "user");
+        (token as any).role = res.rows[0]?.role || "user";
         (token as any).status = res.rows[0]?.status || "pending";
-        return token;
-      } catch (err) {
-        console.error("[auth] jwt DB error:", err);
-        (token as any).role = (token as any).role || (isAdmin ? "admin" : "user");
+      } catch (err: any) {
+        console.error("[auth] jwt lookup FAILED:", err?.message || err, err);
+        (token as any).role = (token as any).role || "user";
         (token as any).status = (token as any).status || "pending";
-        return token;
       }
+
+      return token;
     },
 
     async session({ session, token }) {

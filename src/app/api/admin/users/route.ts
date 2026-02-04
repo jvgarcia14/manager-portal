@@ -1,16 +1,16 @@
-// src/app/api/admin/users/route.ts
 import { NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/requireAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const auth = await requireAdminSession();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
-  const status = String(searchParams.get("status") || "pending").toLowerCase();
+  const status = (searchParams.get("status") || "pending").toLowerCase();
 
   const db = websiteDb();
 
@@ -22,36 +22,31 @@ export async function GET(req: Request) {
       whereSql = "WHERE status = $1";
       params.push("approved");
     } else if (status === "pending") {
-      // treat NULL as pending
       whereSql = "WHERE status IS NULL OR status = $1";
       params.push("pending");
     } else if (status === "all") {
       whereSql = "";
     } else {
-      // fallback
       whereSql = "WHERE status IS NULL OR status = $1";
       params.push("pending");
     }
 
-    // Use COALESCE so it won’t break if created_at is NULL
     const res = await db.query(
       `
-      SELECT
-        email,
-        name,
-        role,
-        status,
-        COALESCE(created_at, now()) AS created_at
+      SELECT email, name, status, role, created_at
       FROM web_users
       ${whereSql}
-      ORDER BY COALESCE(created_at, now()) DESC, email ASC
+      ORDER BY created_at DESC NULLS LAST, email ASC
       `,
       params
     );
 
     return NextResponse.json({ rows: res.rows || [] });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to load users" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message || "Failed to load users" },
+      { status: 500 }
+    );
   }
 }
 
@@ -69,10 +64,12 @@ export async function PATCH(req: Request) {
 
   try {
     if (action === "approve") {
+      // ✅ don’t require updated_at, but set if column exists
       const r = await db.query(
         `
         UPDATE web_users
-        SET status='approved'
+        SET status='approved',
+            updated_at = COALESCE(updated_at, now())
         WHERE email=$1
         `,
         [email]
@@ -91,6 +88,9 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({ error: "invalid action" }, { status: 400 });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to update user" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message || "Failed to update user" },
+      { status: 500 }
+    );
   }
 }
