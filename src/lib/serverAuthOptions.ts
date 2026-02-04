@@ -32,18 +32,19 @@ export const authOptions: NextAuthOptions = {
       try {
         const db = websiteDb();
 
-        // Ensure web_users row exists (default pending)
+        // ✅ Ensure row exists, always refresh updated_at
         await db.query(
           `
-          INSERT INTO web_users (email, name, role, status)
-          VALUES ($1, $2, $3, 'pending')
+          INSERT INTO web_users (email, name, role, status, created_at, updated_at)
+          VALUES ($1, $2, $3, 'pending', now(), now())
           ON CONFLICT (email)
           DO UPDATE SET
             name = COALESCE(EXCLUDED.name, web_users.name),
             role = CASE
               WHEN web_users.role = 'admin' THEN 'admin'
               ELSE EXCLUDED.role
-            END
+            END,
+            updated_at = now()
           `,
           [email, user.name || null, isAdmin ? "admin" : "user"]
         );
@@ -52,14 +53,12 @@ export const authOptions: NextAuthOptions = {
         return true;
       } catch (err) {
         console.error("[auth] signIn DB error:", err);
-        // If you return true here, user can login but won't appear in admin.
-        // Better to fail so you notice immediately.
-        return false;
+        return false; // fail fast so you notice DB misconfig
       }
     },
 
     async jwt({ token, user }) {
-      // ✅ IMPORTANT: ensure token.email exists on first sign-in
+      // ✅ IMPORTANT: token.email not guaranteed unless we set it
       if (user?.email) token.email = user.email;
 
       const email = normEmail(token.email as string);

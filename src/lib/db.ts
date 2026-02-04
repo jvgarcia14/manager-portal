@@ -27,6 +27,12 @@ export function attendanceDb() {
 }
 
 export function websiteDb() {
-  if (!g.__websitePool) g.__websitePool = makePool(process.env.WEBSITE_DATABASE_URL || process.env.DATABASE_URL, "WEBSITE_DATABASE_URL/DATABASE_URL");
+  // ✅ IMPORTANT: set WEBSITE_DATABASE_URL to Postgres-ObVD
+  if (!g.__websitePool) {
+    g.__websitePool = makePool(
+      process.env.WEBSITE_DATABASE_URL || process.env.DATABASE_URL,
+      "WEBSITE_DATABASE_URL/DATABASE_URL"
+    );
+  }
   return g.__websitePool;
 }

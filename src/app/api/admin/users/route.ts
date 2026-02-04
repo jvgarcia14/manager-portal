@@ -22,13 +22,11 @@ export async function GET(req: Request) {
       whereSql = "WHERE status = $1";
       params.push("approved");
     } else if (status === "pending") {
-      // pending includes NULL or 'pending'
       whereSql = "WHERE status IS NULL OR status = $1";
       params.push("pending");
     } else if (status === "all") {
       whereSql = "";
     } else {
-      // fallback -> treat unknown as pending
       whereSql = "WHERE status IS NULL OR status = $1";
       params.push("pending");
     }
@@ -45,10 +43,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ rows: res.rows || [] });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Failed to load users" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "Failed to load users" }, { status: 500 });
   }
 }
 
@@ -67,12 +62,7 @@ export async function PATCH(req: Request) {
   try {
     if (action === "approve") {
       const r = await db.query(
-        `
-        UPDATE web_users
-        SET status = 'approved',
-            updated_at = now()
-        WHERE email = $1
-        `,
+        `UPDATE web_users SET status='approved' WHERE email=$1`,
         [email]
       );
 
@@ -83,15 +73,12 @@ export async function PATCH(req: Request) {
     }
 
     if (action === "reject") {
-      await db.query(`DELETE FROM web_users WHERE email = $1`, [email]);
+      await db.query(`DELETE FROM web_users WHERE email=$1`, [email]);
       return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: "invalid action" }, { status: 400 });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Failed to update user" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "Failed to update user" }, { status: 500 });
   }
 }
