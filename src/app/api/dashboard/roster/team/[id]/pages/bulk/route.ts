@@ -4,20 +4,24 @@ import { websiteDb } from "@/lib/db";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function POST(req: Request, ctx: { params: { id: string } }) {
+type Ctx = { params: { id: string } };
+
+export async function POST(req: Request, { params }: Ctx) {
   try {
-    const teamId = Number(ctx.params.id);
+    const teamId = Number(params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
     const pages = Array.isArray(body?.pages) ? body.pages : [];
 
-    if (!pages.length) return NextResponse.json({ error: "pages array is required" }, { status: 400 });
+    if (!pages.length) {
+      return NextResponse.json({ error: "pages array is required" }, { status: 400 });
+    }
 
     const values: any[] = [];
     const tuples: string[] = [];
-
     let i = 1;
+
     for (const p of pages) {
       const pageKey = String(p?.pageKey || "").trim().toLowerCase();
       const pageLabel = String(p?.pageLabel || "").trim();
@@ -28,7 +32,9 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
       values.push(teamId, pageKey, pageLabel);
     }
 
-    if (!tuples.length) return NextResponse.json({ error: "no valid pages provided" }, { status: 400 });
+    if (!tuples.length) {
+      return NextResponse.json({ error: "no valid pages provided" }, { status: 400 });
+    }
 
     const db = websiteDb();
     await db.query(
