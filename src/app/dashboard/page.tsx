@@ -25,14 +25,18 @@ export default function DashboardPage() {
   const { data: session, status } = useSession();
   const s: any = session;
   const userStatus = s?.status;
-  const role = s?.role || "user";
 
   const [teams, setTeams] = useState<string[]>([]);
   const [team, setTeam] = useState<string>("");
 
+  // ✅ Range selector
+  const [range, setRange] = useState<"daily" | "weekly" | "monthly" | "yearly" | "custom">("weekly");
+  const [startDate, setStartDate] = useState(""); // YYYY-MM-DD
+  const [endDate, setEndDate] = useState(""); // YYYY-MM-DD
+
   const [salesSummary, setSalesSummary] = useState<{
     today: number;
-    total15d: number;
+    total: number;
   } | null>(null);
 
   const [salesPages, setSalesPages] = useState<SalesPageRow[]>([]);
@@ -42,8 +46,26 @@ export default function DashboardPage() {
 
   const teamDisplay = useMemo(() => team || teams[0] || "", [team, teams]);
 
+  // ✅ build query for API
+  const rangeQuery = useMemo(() => {
+    if (range === "custom") {
+      if (!startDate || !endDate) return ""; // wait until dates are filled
+      return `start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+    }
+    return `range=${encodeURIComponent(range)}`;
+  }, [range, startDate, endDate]);
+
+  const rangeLabel = useMemo(() => {
+    if (range === "daily") return "Today";
+    if (range === "weekly") return "This week";
+    if (range === "monthly") return "This month";
+    if (range === "yearly") return "This year";
+    if (startDate && endDate) return `${startDate} → ${endDate}`;
+    return "Custom range";
+  }, [range, startDate, endDate]);
+
   /* =============================
-     Load team list
+     Load team list (pills)
   ============================== */
   useEffect(() => {
     if (!session || userStatus !== "approved") return;
@@ -61,10 +83,11 @@ export default function DashboardPage() {
   }, [session, userStatus]);
 
   /* =============================
-     Load SALES data only
+     Load SALES data (range/custom)
   ============================== */
   useEffect(() => {
     if (!session || userStatus !== "approved" || !teamDisplay) return;
+    if (!rangeQuery) return; // custom mode but dates not selected yet
 
     setLoading(true);
     setErr("");
@@ -72,12 +95,12 @@ export default function DashboardPage() {
     (async () => {
       try {
         const sp = await safeJson(
-          `/api/dashboard/sales/pages?team=${encodeURIComponent(teamDisplay)}&days=15`
+          `/api/dashboard/sales/pages?team=${encodeURIComponent(teamDisplay)}&${rangeQuery}`
         );
 
         setSalesSummary({
           today: Number(sp?.todaySales || 0),
-          total15d: Number(sp?.totalSales || 0),
+          total: Number(sp?.totalSales || 0),
         });
 
         setSalesPages(sp?.rows || []);
@@ -87,7 +110,7 @@ export default function DashboardPage() {
         setLoading(false);
       }
     })();
-  }, [session, userStatus, teamDisplay]);
+  }, [session, userStatus, teamDisplay, rangeQuery]);
 
   /* =============================
      UI States
@@ -131,9 +154,6 @@ export default function DashboardPage() {
       currency: "USD",
     }).format(n || 0);
 
-  /* =============================
-     SALES DASHBOARD UI
-  ============================== */
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
@@ -141,9 +161,7 @@ export default function DashboardPage() {
           <h1 className="h1" style={{ marginBottom: 6 }}>
             Sales Dashboard
           </h1>
-          <p className="small">
-            Live read-only view from Sales Postgres. Built for internal demo.
-          </p>
+          <p className="small">Live read-only view from Sales Postgres. Built for internal demo.</p>
         </div>
         <span className="badge">{loading ? "Refreshing…" : "Live"}</span>
       </div>
@@ -161,16 +179,73 @@ export default function DashboardPage() {
               borderRadius: 999,
               padding: "10px 14px",
               opacity: teamDisplay === t ? 1 : 0.75,
-              border:
-                teamDisplay === t
-                  ? "1px solid rgba(120,120,255,.8)"
-                  : "1px solid rgba(255,255,255,.08)",
+              border: teamDisplay === t ? "1px solid rgba(120,120,255,.8)" : "1px solid rgba(255,255,255,.08)",
             }}
           >
             {t}
           </button>
         ))}
       </div>
+
+      {/* Range Pills */}
+      <div className="row" style={{ flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+        {(["daily", "weekly", "monthly", "yearly", "custom"] as const).map((r) => (
+          <button
+            key={r}
+            className="btn"
+            onClick={() => setRange(r)}
+            style={{
+              borderRadius: 999,
+              padding: "10px 14px",
+              opacity: range === r ? 1 : 0.75,
+              border: range === r ? "1px solid rgba(120,120,255,.8)" : "1px solid rgba(255,255,255,.08)",
+            }}
+          >
+            {r === "daily"
+              ? "Daily"
+              : r === "weekly"
+              ? "Weekly"
+              : r === "monthly"
+              ? "Monthly"
+              : r === "yearly"
+              ? "Year"
+              : "Custom"}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom Date Inputs */}
+      {range === "custom" ? (
+        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="small" style={{ marginBottom: 6, opacity: 0.8 }}>
+              Start
+            </div>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              style={{ padding: 10, borderRadius: 10 }}
+            />
+          </div>
+
+          <div className="card" style={{ padding: 12 }}>
+            <div className="small" style={{ marginBottom: 6, opacity: 0.8 }}>
+              End
+            </div>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              style={{ padding: 10, borderRadius: 10 }}
+            />
+          </div>
+
+          <span className="small" style={{ opacity: 0.75 }}>
+            {startDate && endDate ? "✅ Applied" : "Pick both dates"}
+          </span>
+        </div>
+      ) : null}
 
       {err && (
         <>
@@ -194,9 +269,9 @@ export default function DashboardPage() {
         </div>
 
         <div className="kpi" style={{ flex: 1 }}>
-          <p className="kpiTitle">Total Sales (15d)</p>
-          <p className="kpiValue">{money(salesSummary?.total15d || 0)}</p>
-          <p className="small">Rolling last 15 days</p>
+          <p className="kpiTitle">Total Sales</p>
+          <p className="kpiValue">{money(salesSummary?.total || 0)}</p>
+          <p className="small">{rangeLabel}</p>
         </div>
 
         <div className="kpi" style={{ flex: 1 }}>
@@ -209,8 +284,8 @@ export default function DashboardPage() {
       <div className="hr" />
 
       {/* Page Performance */}
-      <h2 className="h2">Page Performance (15d)</h2>
-      <p className="small">Shows sales totals by page.</p>
+      <h2 className="h2">Page Performance</h2>
+      <p className="small">Shows sales totals by page for: {rangeLabel}</p>
 
       <div className="spacer" />
 
