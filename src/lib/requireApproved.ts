@@ -1,6 +1,9 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/serverAuthOptions";
 
+/**
+ * Main implementation
+ */
 export async function requireApprovedSession() {
   const session = await getServerSession(authOptions);
 
@@ -9,12 +12,33 @@ export async function requireApprovedSession() {
   const role = String((session as any)?.role || "user").toLowerCase();
 
   if (!session || !email) {
-    return { ok: false as const, status: "signed_out" as const, role: "user" as const, error: "Not signed in" };
+    return {
+      ok: false as const,
+      status: "signed_out" as const,
+      role: "user" as const,
+      error: "Not signed in",
+    };
   }
 
   if (status !== "approved") {
-    return { ok: false as const, status: status as any, role: role as any, error: "Awaiting approval" };
+    return {
+      ok: false as const,
+      status: status as any,
+      role: role as any,
+      error: "Awaiting approval",
+    };
   }
 
-  return { ok: true as const, status: "approved" as const, role: role as any, email };
+  return {
+    ok: true as const,
+    status: "approved" as const,
+    role: role as any,
+    email,
+  };
 }
+
+/**
+ * ✅ Backwards-compatible alias
+ * So imports using `requireApproved` DO NOT BREAK
+ */
+export const requireApproved = requireApprovedSession;

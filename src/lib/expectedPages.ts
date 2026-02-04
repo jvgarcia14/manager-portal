@@ -87,8 +87,7 @@ export const RAW_PAGES: Record<string, string> = {
   utahjazpaid: "UtahJaz Paid",
   utahjazfree: "UtahJaz Free",
   utahjazwelcome: "UtahJaz Welcome",
-  
-  // ...continue your list (copy all from your bot)
+  // ...continue your list
 };
 
 export function normalizeTag(tag: string) {
@@ -98,7 +97,13 @@ export function normalizeTag(tag: string) {
     .replace(/x/g, "");
 }
 
-// This is your EXPECTED_PAGES equivalent (normalized keys)
+// ✅ normalized keys (matches your bot)
 export const EXPECTED_PAGES: Record<string, string> = Object.fromEntries(
   Object.entries(RAW_PAGES).map(([k, v]) => [normalizeTag(k), v])
 );
+
+// ✅ NEW: list for roster quick add / seeding
+export const EXPECTED_PAGE_LIST = Object.entries(RAW_PAGES).map(([pageKey, pageLabel]) => ({
+  pageKey: normalizeTag(pageKey),
+  pageLabel,
+}));

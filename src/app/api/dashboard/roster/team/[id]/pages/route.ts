@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { requireApproved } from "@/lib/requireApproved";
-import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
+import { EXPECTED_PAGES } from "@/lib/expectedPages";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
