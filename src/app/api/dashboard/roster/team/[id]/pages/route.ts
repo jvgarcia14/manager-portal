@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { requireApproved } from "@/lib/requireApproved";
 import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
@@ -6,15 +6,15 @@ import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET(
-  _req: Request,
-  context: { params: { id: string } }
-) {
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(context.params.id);
+    const { id } = await params;
+    const teamId = Number(id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const db = websiteDb();
@@ -28,7 +28,7 @@ export async function GET(
       [teamId]
     );
 
-    // ✅ seed defaults if team has no pages yet
+    // seed defaults if empty
     if ((r.rows?.length || 0) === 0) {
       const values: any[] = [];
       const tuples: string[] = [];
@@ -71,15 +71,13 @@ export async function GET(
   }
 }
 
-export async function POST(
-  req: Request,
-  context: { params: { id: string } }
-) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(context.params.id);
+    const { id } = await params;
+    const teamId = Number(id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
@@ -110,15 +108,13 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  req: Request,
-  context: { params: { id: string } }
-) {
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(context.params.id);
+    const { id } = await params;
+    const teamId = Number(id);
 
     const { searchParams } = new URL(req.url);
     const pageKey = String(searchParams.get("pageKey") || "").trim().toLowerCase();
