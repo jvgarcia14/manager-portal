@@ -1,15 +1,19 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
+import { requireApproved } from "@/lib/requireApproved";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Ctx = { params: Promise<{ id: string }> };
+export async function POST(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
+  const gate = await requireApproved();
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
-export async function POST(req: NextRequest, { params }: Ctx) {
   try {
-    const { id } = await params; // ✅ Next 16 expects params as Promise
-    const teamId = Number(id);
+    const teamId = Number(params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
