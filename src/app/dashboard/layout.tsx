@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -8,7 +9,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { data: session } = useSession();
   const pathname = usePathname();
   const s: any = session;
-  const role = s?.role || "user";
+  const role = (s?.role || "user") as string;
 
   const tabStyle = (active: boolean) => ({
     borderRadius: 999,
@@ -17,6 +18,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     border: active ? "1px solid rgba(120,120,255,.8)" : "1px solid rgba(255,255,255,.08)",
     background: "transparent",
   });
+
+  // ✅ helper: active if exact OR startsWith for subpages
+  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+
+  const isAdmin = role === "admin";
 
   return (
     <div className="container">
@@ -39,17 +45,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Tabs */}
       <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-        <Link href="/dashboard" className="btn" style={tabStyle(pathname === "/dashboard") as any}>
+        <Link href="/dashboard" className="btn" style={tabStyle(isActive("/dashboard")) as any}>
           Sales
         </Link>
 
         <Link
           href="/dashboard/attendance"
           className="btn"
-          style={tabStyle(pathname === "/dashboard/attendance") as any}
+          style={tabStyle(isActive("/dashboard/attendance")) as any}
         >
           Attendance
         </Link>
+
+        {/* ✅ Admin-only */}
+        {isAdmin ? (
+          <Link
+            href="/dashboard/roster"
+            className="btn"
+            style={tabStyle(isActive("/dashboard/roster")) as any}
+          >
+            Roster
+          </Link>
+        ) : null}
       </div>
 
       <div className="spacer" />

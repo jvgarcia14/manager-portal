@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { EXPECTED_PAGES } from "@/lib/expectedPages";
 
 type AttendanceRow = { pageKey: string; shift: string; clockedIn: number; covers: number };
+type Team = { id: number; name: string };
+type TeamPage = { pageKey: string; pageLabel: string };
 
-async function safeJson(url: string) {
-  const r = await fetch(url, { cache: "no-store" });
+async function safeJson(url: string, init?: RequestInit) {
+  const r = await fetch(url, { cache: "no-store", ...(init || {}) });
   const text = await r.text();
   try {
     const json = JSON.parse(text);
@@ -25,20 +26,26 @@ export default function AttendancePage() {
   const s: any = session;
   const userStatus = s?.status;
 
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
   const [attSummary, setAttSummary] = useState<{ attendanceDay: string; clockedIn: number; covers: number } | null>(
     null
   );
   const [attRows, setAttRows] = useState<AttendanceRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
 
-  // ✅ new
+  // ✅ roster teams + pages
+  const [rosterTeams, setRosterTeams] = useState<Team[]>([]);
+  const [teamId, setTeamId] = useState<number | null>(null);
+  const [teamPages, setTeamPages] = useState<TeamPage[]>([]);
+
+  // filters
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>("all");
   const [missingSearch, setMissingSearch] = useState("");
 
+  // load attendance
   useEffect(() => {
-    if (!session) return;
-    if (userStatus !== "approved") return;
+    if (!session || userStatus !== "approved") return;
 
     setLoading(true);
     setErr("");
@@ -65,9 +72,48 @@ export default function AttendancePage() {
     })();
   }, [session, userStatus]);
 
-  // ✅ compute expected vs clocked
-  const expectedKeys = useMemo(() => Object.keys(EXPECTED_PAGES), []);
+  // load roster teams
+  useEffect(() => {
+    if (!session || userStatus !== "approved") return;
 
+    (async () => {
+      try {
+        const t = await safeJson("/api/dashboard/roster/teams");
+        setRosterTeams(t.teams || []);
+        if (!teamId && (t.teams?.length || 0) > 0) setTeamId(t.teams[0].id);
+      } catch (e: any) {
+        // roster is optional - don’t hard fail attendance
+        console.error(e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, userStatus]);
+
+  // load pages for selected roster team
+  useEffect(() => {
+    if (!teamId) return;
+
+    (async () => {
+      try {
+        const p = await safeJson(`/api/dashboard/roster/team/${teamId}/pages`);
+        setTeamPages(p.pages || []);
+      } catch (e) {
+        console.error(e);
+        setTeamPages([]);
+      }
+    })();
+  }, [teamId]);
+
+  // expected list = roster team pages
+  const expectedKeys = useMemo(() => teamPages.map((p) => String(p.pageKey || "").toLowerCase()), [teamPages]);
+
+  const expectedMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of teamPages) m.set(String(p.pageKey || "").toLowerCase(), String(p.pageLabel || p.pageKey));
+    return m;
+  }, [teamPages]);
+
+  // clocked set depends on shift filter
   const clockedSet = useMemo(() => {
     const set = new Set<string>();
     for (const r of attRows) {
@@ -76,10 +122,7 @@ export default function AttendancePage() {
       const isClocked = (Number(r.clockedIn) || 0) > 0 || (Number(r.covers) || 0) > 0;
 
       if (!isClocked) continue;
-
-      if (shiftFilter === "all" || shiftFilter === shift) {
-        set.add(key);
-      }
+      if (shiftFilter === "all" || shiftFilter === shift) set.add(key);
     }
     return set;
   }, [attRows, shiftFilter]);
@@ -88,19 +131,14 @@ export default function AttendancePage() {
     const q = missingSearch.trim().toLowerCase();
     const miss = expectedKeys
       .filter((k) => !clockedSet.has(k))
-      .map((k) => ({ pageKey: k, pageLabel: EXPECTED_PAGES[k] }));
+      .map((k) => ({ pageKey: k, pageLabel: expectedMap.get(k) || k }));
 
     if (!q) return miss;
-
-    return miss.filter(
-      (x) =>
-        x.pageKey.toLowerCase().includes(q) ||
-        (x.pageLabel || "").toLowerCase().includes(q)
-    );
-  }, [expectedKeys, clockedSet, missingSearch]);
+    return miss.filter((x) => x.pageKey.includes(q) || x.pageLabel.toLowerCase().includes(q));
+  }, [expectedKeys, clockedSet, expectedMap, missingSearch]);
 
   const expectedCount = expectedKeys.length;
-  const clockedCount = clockedSet.size;
+  const clockedCount = expectedKeys.filter((k) => clockedSet.has(k)).length; // IMPORTANT: only count expected pages
   const missingCount = expectedCount - clockedCount;
 
   // UI states
@@ -143,7 +181,7 @@ export default function AttendancePage() {
             Attendance Today
           </h1>
           <p className="small">
-            Attendance day starts at <b>6:00 AM PH</b>. (Attendance is global unless your bot stores team.)
+            Attendance day starts at <b>6:00 AM PH</b>. Select a team to track only its pages.
           </p>
         </div>
         <span className="badge">{loading ? "Refreshing…" : "Live"}</span>
@@ -162,7 +200,33 @@ export default function AttendancePage() {
 
       <div className="spacer" />
 
-      {/* ✅ Shift filter pills */}
+      {/* ✅ Team pills (roster teams) */}
+      <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
+        {rosterTeams.map((t) => (
+          <button
+            key={t.id}
+            className="btn"
+            onClick={() => setTeamId(t.id)}
+            style={{
+              borderRadius: 999,
+              padding: "10px 14px",
+              opacity: teamId === t.id ? 1 : 0.75,
+              border: teamId === t.id ? "1px solid rgba(120,120,255,.8)" : "1px solid rgba(255,255,255,.08)",
+            }}
+          >
+            {t.name}
+          </button>
+        ))}
+        {rosterTeams.length === 0 ? (
+          <span className="small" style={{ opacity: 0.75 }}>
+            No roster teams yet. Create them in <b>Roster</b>.
+          </span>
+        ) : null}
+      </div>
+
+      <div className="spacer" />
+
+      {/* Shift pills */}
       <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
         {(["all", "prime", "midshift", "closing"] as const).map((s) => (
           <button
@@ -183,7 +247,7 @@ export default function AttendancePage() {
 
       <div className="spacer" />
 
-      {/* ✅ Status counts */}
+      {/* Status counts (TEAM ONLY) */}
       <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <span className="badge">Attendance day: {attSummary?.attendanceDay || "—"}</span>
         <span className="badge">Expected: {expectedCount}</span>
@@ -193,9 +257,8 @@ export default function AttendancePage() {
 
       <div className="hr" />
 
-      {/* ✅ Missing list */}
       <h2 className="h2">Not Clocked In ({shiftFilter})</h2>
-      <p className="small">Based on your RAW_PAGES roster.</p>
+      <p className="small">Tracking only the pages you added inside this team roster.</p>
 
       <div className="spacer" />
 
@@ -216,7 +279,13 @@ export default function AttendancePage() {
 
       <div className="spacer" />
 
-      {missingList.length === 0 ? (
+      {expectedCount === 0 ? (
+        <div className="card" style={{ padding: 14 }}>
+          <p className="small">
+            No pages added for this team yet. Go to <b>Roster</b> and add pages.
+          </p>
+        </div>
+      ) : missingList.length === 0 ? (
         <p className="small">✅ No missing pages for this filter.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -238,8 +307,9 @@ export default function AttendancePage() {
 
       <div className="hr" />
 
-      {/* Existing attendance table (who clocked in) */}
-      <h2 className="h2">Clocked In List</h2>
+      {/* Existing table */}
+      <h2 className="h2">Clocked In List (All pages)</h2>
+      <p className="small">This table shows all clock-ins from the bot. Your Missing list is team-based above.</p>
 
       <div className="spacer" />
 
