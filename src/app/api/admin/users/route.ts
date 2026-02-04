@@ -19,7 +19,7 @@ export async function GET(req: Request) {
       ? ""
       : status === "approved"
         ? "WHERE status='approved'"
-        : "WHERE status='pending'";
+        : "WHERE status IS NULL OR status='pending'";
 
   const res = await db.query(
     `
@@ -46,7 +46,10 @@ export async function PATCH(req: Request) {
   const db = websiteDb();
 
   if (action === "approve") {
-    await db.query(`UPDATE web_users SET status='approved' WHERE email=$1`, [email]);
+    const r = await db.query(`UPDATE web_users SET status='approved' WHERE email=$1`, [email]);
+    if ((r.rowCount || 0) === 0) {
+      return NextResponse.json({ error: "user not found in web_users" }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   }
 
