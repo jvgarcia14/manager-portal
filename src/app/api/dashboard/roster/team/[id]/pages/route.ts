@@ -6,9 +6,10 @@ import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Ctx = { params: { id: string } };
-
-export async function GET(_req: Request, { params }: Ctx) {
+export async function GET(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
@@ -27,7 +28,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       [teamId]
     );
 
-    // ✅ seed defaults if team has no pages yet
+    // seed defaults if empty
     if ((r.rows?.length || 0) === 0) {
       const values: any[] = [];
       const tuples: string[] = [];
@@ -70,7 +71,10 @@ export async function GET(_req: Request, { params }: Ctx) {
   }
 }
 
-export async function POST(req: Request, { params }: Ctx) {
+export async function POST(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
@@ -106,12 +110,16 @@ export async function POST(req: Request, { params }: Ctx) {
   }
 }
 
-export async function DELETE(req: Request, { params }: Ctx) {
+export async function DELETE(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
     const teamId = Number(params.id);
+
     const { searchParams } = new URL(req.url);
     const pageKey = String(searchParams.get("pageKey") || "").trim().toLowerCase();
 

@@ -5,9 +5,10 @@ import { requireApproved } from "@/lib/requireApproved";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Ctx = { params: { id: string } };
-
-export async function DELETE(_req: Request, { params }: Ctx) {
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
