@@ -1,16 +1,16 @@
+// src/app/api/admin/users/route.ts
 import { NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { requireAdminSession } from "@/lib/requireAdmin";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const auth = await requireAdminSession();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
-  const status = (searchParams.get("status") || "pending").toLowerCase();
+  const status = String(searchParams.get("status") || "pending").toLowerCase();
 
   const db = websiteDb();
 
@@ -27,6 +27,7 @@ export async function GET(req: Request) {
     } else if (status === "all") {
       whereSql = "";
     } else {
+      // fallback: treat unknown as pending
       whereSql = "WHERE status IS NULL OR status = $1";
       params.push("pending");
     }
@@ -64,20 +65,18 @@ export async function PATCH(req: Request) {
 
   try {
     if (action === "approve") {
-      // ✅ don’t require updated_at, but set if column exists
       const r = await db.query(
-        `
-        UPDATE web_users
-        SET status='approved',
-            updated_at = COALESCE(updated_at, now())
-        WHERE email=$1
-        `,
+        `UPDATE web_users SET status='approved' WHERE email=$1`,
         [email]
       );
 
       if ((r.rowCount || 0) === 0) {
-        return NextResponse.json({ error: "user not found in web_users" }, { status: 404 });
+        return NextResponse.json(
+          { error: "user not found in web_users" },
+          { status: 404 }
+        );
       }
+
       return NextResponse.json({ ok: true });
     }
 
