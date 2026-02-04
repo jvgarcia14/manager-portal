@@ -20,8 +20,10 @@ async function safeJson(url: string, init?: RequestInit) {
 }
 
 export default function RosterPage() {
-  const { data: session } = useSession();
-  const role = ((session as any)?.role || "user") as string;
+  const { data: session, status: sessionStatus } = useSession();
+
+  const role = String((session as any)?.role || "user").toLowerCase();
+  const approval = String((session as any)?.status || "").toLowerCase(); // "approved" | "pending" | ...
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -38,10 +40,12 @@ export default function RosterPage() {
   const [qaSearch, setQaSearch] = useState("");
   const [qaSelected, setQaSelected] = useState<Record<string, boolean>>({});
 
-  const selectedTeam = useMemo(() => teams.find((t) => t.id === selectedId) || null, [teams, selectedId]);
+  const selectedTeam = useMemo(
+    () => teams.find((t) => t.id === selectedId) || null,
+    [teams, selectedId]
+  );
 
   const rawList = useMemo(() => {
-    // RAW_PAGES keys are your pageKey
     return Object.entries(RAW_PAGES).map(([k, v]) => ({
       pageKey: String(k).toLowerCase(),
       pageLabel: String(v),
@@ -58,8 +62,11 @@ export default function RosterPage() {
 
   async function loadTeams() {
     const t = await safeJson("/api/dashboard/roster/teams");
-    setTeams(t.teams || []);
-    if (!selectedId && (t.teams?.length || 0) > 0) setSelectedId(t.teams[0].id);
+    const nextTeams = (t.teams || []) as Team[];
+    setTeams(nextTeams);
+
+    // keep selection stable; otherwise pick first
+    if (!selectedId && nextTeams.length > 0) setSelectedId(nextTeams[0].id);
   }
 
   async function loadPages(teamId: number) {
@@ -67,8 +74,11 @@ export default function RosterPage() {
     setPages(p.pages || []);
   }
 
+  // ✅ Allow ALL approved users to use roster (admin + user)
   useEffect(() => {
-    if (role !== "admin") return;
+    if (!session) return;
+    if (approval !== "approved") return;
+
     (async () => {
       try {
         setLoading(true);
@@ -81,11 +91,13 @@ export default function RosterPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role]);
+  }, [session, approval]);
 
   useEffect(() => {
-    if (role !== "admin") return;
+    if (!session) return;
+    if (approval !== "approved") return;
     if (!selectedId) return;
+
     (async () => {
       try {
         setLoading(true);
@@ -97,7 +109,7 @@ export default function RosterPage() {
         setLoading(false);
       }
     })();
-  }, [role, selectedId]);
+  }, [session, approval, selectedId]);
 
   async function createTeam() {
     const name = newTeamName.trim();
@@ -151,9 +163,10 @@ export default function RosterPage() {
     setLoading(true);
     setErr("");
     try {
-      await safeJson(`/api/dashboard/roster/team/${selectedId}/pages?pageKey=${encodeURIComponent(k)}`, {
-        method: "DELETE",
-      });
+      await safeJson(
+        `/api/dashboard/roster/team/${selectedId}/pages?pageKey=${encodeURIComponent(k)}`,
+        { method: "DELETE" }
+      );
       await loadPages(selectedId);
     } catch (e: any) {
       setErr(e.message || "Failed to remove page");
@@ -176,12 +189,14 @@ export default function RosterPage() {
     setQaSelected({});
   }
 
-  const selectedCount = useMemo(() => Object.values(qaSelected).filter(Boolean).length, [qaSelected]);
+  const selectedCount = useMemo(
+    () => Object.values(qaSelected).filter(Boolean).length,
+    [qaSelected]
+  );
 
   async function bulkAddSelected() {
     if (!selectedId) return;
     const pagesToAdd = rawList.filter((x) => qaSelected[x.pageKey]);
-
     if (!pagesToAdd.length) return;
 
     setLoading(true);
@@ -201,21 +216,71 @@ export default function RosterPage() {
     }
   }
 
-  if (role !== "admin") {
+  // ✅ NEW: Delete all members/pages (FAST: one endpoint)
+  async function deleteAllMembers() {
+    if (!selectedId) return;
+    if (pages.length === 0) return;
+
+    const ok = confirm(
+      `Delete ALL members/pages from "${selectedTeam?.name || "this team"}"?`
+    );
+    if (!ok) return;
+
+    setLoading(true);
+    setErr("");
+    try {
+      await safeJson(`/api/dashboard/roster/team/${selectedId}/pages/clear`, {
+        method: "DELETE",
+      });
+      await loadPages(selectedId);
+    } catch (e: any) {
+      setErr(e.message || "Failed to delete all members");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ✅ Professional gating
+  if (sessionStatus === "loading") {
     return (
       <div className="card">
         <h1 className="h1">Roster</h1>
-        <p className="small">Admin only.</p>
+        <p className="small">Loading…</p>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="card">
+        <h1 className="h1">Roster</h1>
+        <p className="small">Please sign in to continue.</p>
+      </div>
+    );
+  }
+
+  if (approval !== "approved") {
+    return (
+      <div className="card">
+        <h1 className="h1">Roster</h1>
+        <p className="small">Awaiting approval.</p>
       </div>
     );
   }
 
   return (
     <div className="card">
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
+      <div
+        className="row"
+        style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}
+      >
         <div>
-          <h1 className="h1" style={{ marginBottom: 6 }}>Roster</h1>
-          <p className="small">Create teams and add pages. Attendance will track only pages inside the selected team.</p>
+          <h1 className="h1" style={{ marginBottom: 6 }}>
+            Roster
+          </h1>
+          <p className="small">
+            Create teams and add pages. Attendance will track only pages inside the selected team.
+          </p>
         </div>
         <span className="badge">{loading ? "Saving…" : "Ready"}</span>
       </div>
@@ -223,74 +288,107 @@ export default function RosterPage() {
       {err ? (
         <>
           <div className="spacer" />
-          <div className="card" style={{ border: "1px solid rgba(255,80,80,.35)" }}>
-            <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>Error: {err}</p>
+          <div className="errorBox">
+            <p className="small" style={{ color: "rgba(255,180,180,.95)" }}>
+              Error: {err}
+            </p>
           </div>
         </>
       ) : null}
 
       <div className="spacer" />
 
-      <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
-        {/* Left: Teams */}
+      <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        {/* LEFT: Teams */}
         <div className="card" style={{ padding: 14, flex: 1, minWidth: 280 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Teams</div>
+          {/* Sticky Create Team */}
+          <div
+            style={{
+              position: "sticky",
+              top: 10,
+              zIndex: 5,
+              background: "rgba(0,0,0,.25)",
+              backdropFilter: "blur(10px)",
+              border: "1px solid rgba(255,255,255,.10)",
+              borderRadius: 14,
+              padding: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: 8 }}>Teams</div>
 
-          <div className="row" style={{ gap: 10 }}>
-            <input
-              value={newTeamName}
-              onChange={(e) => setNewTeamName(e.target.value)}
-              placeholder="New team name (Black, Cobra, ...)"
-              style={{
-                flex: 1,
-                padding: 12,
-                borderRadius: 12,
-                background: "rgba(255,255,255,.06)",
-                border: "1px solid rgba(255,255,255,.10)",
-                color: "white",
-                outline: "none",
-              }}
-            />
-            <button className="btn btnPrimary" onClick={createTeam} disabled={!newTeamName.trim()}>
-              Create
-            </button>
+            <div className="row" style={{ gap: 10 }}>
+              <input
+                className="input"
+                value={newTeamName}
+                onChange={(e) => setNewTeamName(e.target.value)}
+                placeholder="New team name (Black, Cobra, ...)"
+              />
+              <button
+                className="btn btnPrimary"
+                onClick={createTeam}
+                disabled={!newTeamName.trim() || loading}
+              >
+                Create
+              </button>
+            </div>
           </div>
 
           <div className="spacer" />
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {teams.map((t) => (
-              <button
-                key={t.id}
-                className="btn"
-                onClick={() => setSelectedId(t.id)}
-                style={{
-                  justifyContent: "space-between",
-                  borderRadius: 14,
-                  padding: "12px 14px",
-                  opacity: selectedId === t.id ? 1 : 0.8,
-                  border: selectedId === t.id ? "1px solid rgba(120,120,255,.8)" : "1px solid rgba(255,255,255,.08)",
-                }}
-              >
-                <span style={{ fontWeight: 800 }}>{t.name}</span>
-                <span className="badge">#{t.id}</span>
-              </button>
-            ))}
-            {teams.length === 0 ? <p className="small">No teams yet. Create one.</p> : null}
+          {/* Scroll only team list */}
+          <div style={{ maxHeight: 520, overflow: "auto", paddingRight: 4 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {teams.map((t) => (
+                <button
+                  key={t.id}
+                  className="btn"
+                  onClick={() => setSelectedId(t.id)}
+                  style={{
+                    justifyContent: "space-between",
+                    borderRadius: 14,
+                    padding: "12px 14px",
+                    opacity: selectedId === t.id ? 1 : 0.8,
+                    border:
+                      selectedId === t.id
+                        ? "1px solid rgba(120,120,255,.8)"
+                        : "1px solid rgba(255,255,255,.08)",
+                  }}
+                >
+                  <span style={{ fontWeight: 800 }}>{t.name}</span>
+                  <span className="badge">#{t.id}</span>
+                </button>
+              ))}
+              {teams.length === 0 ? <p className="small">No teams yet. Create one.</p> : null}
+            </div>
           </div>
         </div>
 
-        {/* Right: Pages */}
+        {/* RIGHT: Pages */}
         <div className="card" style={{ padding: 14, flex: 2, minWidth: 320 }}>
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div style={{ fontWeight: 800 }}>Pages in Team</div>
-            <span className="badge">{selectedTeam ? selectedTeam.name : "Select a team"}</span>
+
+            <div className="row" style={{ gap: 10 }}>
+              <span className="badge">{selectedTeam ? selectedTeam.name : "Select a team"}</span>
+
+              <button
+                className="btn"
+                onClick={deleteAllMembers}
+                disabled={!selectedId || pages.length === 0 || loading}
+                style={{
+                  border: "1px solid var(--danger-border)",
+                  background: "var(--danger)",
+                }}
+              >
+                Delete all members
+              </button>
+            </div>
           </div>
 
           <div className="spacer" />
 
-          {/* ✅ Quick Add Panel */}
-          <div className="card" style={{ padding: 14 }}>
+          {/* Quick Add Panel */}
+          <div className="cardSoft">
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div style={{ fontWeight: 800 }}>Quick Add</div>
               <button className="btn" onClick={() => setQaOpen((v) => !v)}>
@@ -301,22 +399,16 @@ export default function RosterPage() {
             {qaOpen ? (
               <>
                 <div className="spacer" />
+
                 <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
                   <input
+                    className="input"
                     value={qaSearch}
                     onChange={(e) => setQaSearch(e.target.value)}
                     placeholder="Search RAW_PAGES (key or label)…"
-                    style={{
-                      flex: 1,
-                      minWidth: 220,
-                      padding: 12,
-                      borderRadius: 12,
-                      background: "rgba(255,255,255,.06)",
-                      border: "1px solid rgba(255,255,255,.10)",
-                      color: "white",
-                      outline: "none",
-                    }}
+                    style={{ minWidth: 240 }}
                   />
+
                   <button className="btn" onClick={selectAllVisible}>
                     Select visible
                   </button>
@@ -326,13 +418,12 @@ export default function RosterPage() {
                   <button
                     className="btn btnPrimary"
                     onClick={bulkAddSelected}
-                    disabled={!selectedId || selectedCount === 0}
+                    disabled={!selectedId || selectedCount === 0 || loading}
                   >
                     Add selected ({selectedCount})
                   </button>
                 </div>
 
-                <div className="spacer" />
                 <div className="hr" />
 
                 <div style={{ maxHeight: 380, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -354,7 +445,9 @@ export default function RosterPage() {
                     >
                       <div>
                         <div style={{ fontWeight: 800 }}>{x.pageLabel}</div>
-                        <div className="small" style={{ opacity: 0.75 }}>#{x.pageKey}</div>
+                        <div className="small" style={{ opacity: 0.75 }}>
+                          #{x.pageKey}
+                        </div>
                       </div>
                       <span className="badge">{qaSelected[x.pageKey] ? "Selected" : "Pick"}</span>
                     </button>
@@ -369,45 +462,28 @@ export default function RosterPage() {
           {/* Manual Add */}
           <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
             <input
+              className="input"
               value={pageLabel}
               onChange={(e) => setPageLabel(e.target.value)}
               placeholder="Page label (e.g. Alanna Paid)"
-              style={{
-                flex: 2,
-                minWidth: 220,
-                padding: 12,
-                borderRadius: 12,
-                background: "rgba(255,255,255,.06)",
-                border: "1px solid rgba(255,255,255,.10)",
-                color: "white",
-                outline: "none",
-              }}
+              style={{ flex: 2, minWidth: 220 }}
             />
             <input
+              className="input"
               value={pageKey}
               onChange={(e) => setPageKey(e.target.value)}
               placeholder="pageKey (e.g. alannapaid)"
-              style={{
-                flex: 1,
-                minWidth: 180,
-                padding: 12,
-                borderRadius: 12,
-                background: "rgba(255,255,255,.06)",
-                border: "1px solid rgba(255,255,255,.10)",
-                color: "white",
-                outline: "none",
-              }}
+              style={{ flex: 1, minWidth: 180 }}
             />
             <button
               className="btn btnPrimary"
               onClick={addPage}
-              disabled={!selectedId || !pageKey.trim() || !pageLabel.trim()}
+              disabled={!selectedId || !pageKey.trim() || !pageLabel.trim() || loading}
             >
               Add
             </button>
           </div>
 
-          <div className="spacer" />
           <div className="hr" />
 
           {pages.length === 0 ? (
@@ -415,13 +491,15 @@ export default function RosterPage() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {pages.map((p) => (
-                <div key={p.pageKey} className="card" style={{ padding: 14 }}>
+                <div key={p.pageKey} className="cardSoft">
                   <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                     <div>
                       <div style={{ fontWeight: 800 }}>{p.pageLabel}</div>
-                      <div className="small" style={{ opacity: 0.75 }}>#{p.pageKey}</div>
+                      <div className="small" style={{ opacity: 0.75 }}>
+                        #{p.pageKey}
+                      </div>
                     </div>
-                    <button className="btn" onClick={() => removePage(p.pageKey)}>
+                    <button className="btn" onClick={() => removePage(p.pageKey)} disabled={loading}>
                       Remove
                     </button>
                   </div>
@@ -429,6 +507,11 @@ export default function RosterPage() {
               ))}
             </div>
           )}
+
+          <div className="spacer" />
+          <p className="small" style={{ opacity: 0.5 }}>
+            Role: {role} • Status: {approval}
+          </p>
         </div>
       </div>
     </div>

@@ -132,3 +132,16 @@ button { font: inherit; }
   color: var(--muted);
 }
 .table th { color: rgba(255,255,255,0.78); font-weight: 600; }
+.input {
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: white;
+  outline: none;
+}
+.input:focus {
+  border-color: rgba(109,92,255,0.55);
+  box-shadow: 0 0 0 3px rgba(109,92,255,0.12);
+}

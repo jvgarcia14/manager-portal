@@ -6,15 +6,14 @@ import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Ctx = { params: Promise<{ id: string }> };
+type Ctx = { params: { id: string } };
 
 export async function GET(_req: Request, { params }: Ctx) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const { id } = await params;
-    const teamId = Number(id);
+    const teamId = Number(params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const db = websiteDb();
@@ -64,7 +63,10 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     return NextResponse.json({ pages: r.rows });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to load pages", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to load pages", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
@@ -73,8 +75,7 @@ export async function POST(req: Request, { params }: Ctx) {
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const { id } = await params;
-    const teamId = Number(id);
+    const teamId = Number(params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
@@ -98,7 +99,10 @@ export async function POST(req: Request, { params }: Ctx) {
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to add page", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to add page", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
@@ -107,9 +111,7 @@ export async function DELETE(req: Request, { params }: Ctx) {
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const { id } = await params;
-    const teamId = Number(id);
-
+    const teamId = Number(params.id);
     const { searchParams } = new URL(req.url);
     const pageKey = String(searchParams.get("pageKey") || "").trim().toLowerCase();
 
@@ -121,6 +123,9 @@ export async function DELETE(req: Request, { params }: Ctx) {
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to delete page", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to delete page", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
