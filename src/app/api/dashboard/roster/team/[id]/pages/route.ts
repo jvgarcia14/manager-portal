@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { requireApproved } from "@/lib/requireApproved";
-import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -28,41 +27,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       [teamId]
     );
 
-    // seed defaults if empty
-    if ((r.rows?.length || 0) === 0) {
-      const values: any[] = [];
-      const tuples: string[] = [];
-      let i = 1;
-
-      for (const p of EXPECTED_PAGE_LIST) {
-        tuples.push(`($${i++}, $${i++}, $${i++})`);
-        values.push(teamId, p.pageKey, p.pageLabel);
-      }
-
-      await db.query(
-        `
-        INSERT INTO roster_team_pages(team_id, page_key, page_label)
-        VALUES ${tuples.join(",")}
-        ON CONFLICT (team_id, page_key)
-        DO UPDATE SET page_label = EXCLUDED.page_label
-        `,
-        values
-      );
-
-      const r2 = await db.query(
-        `
-        SELECT page_key as "pageKey", page_label as "pageLabel"
-        FROM roster_team_pages
-        WHERE team_id = $1
-        ORDER BY page_label ASC
-        `,
-        [teamId]
-      );
-
-      return NextResponse.json({ pages: r2.rows });
-    }
-
-    return NextResponse.json({ pages: r.rows });
+    // ✅ NO SEEDING. Team starts empty.
+    return NextResponse.json({ pages: r.rows || [] });
   } catch (e: any) {
     return NextResponse.json(
       { error: "failed to load pages", detail: String(e?.message || e) },
