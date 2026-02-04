@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { websiteDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET(_: Request, ctx: { params: { id: string } }) {
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
   try {
-    const teamId = Number(ctx.params.id);
+    const { id } = await params; // ✅ Next 16 expects params as Promise
+    const teamId = Number(id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const db = websiteDb();
@@ -22,13 +25,17 @@ export async function GET(_: Request, ctx: { params: { id: string } }) {
 
     return NextResponse.json({ pages: r.rows });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to load pages", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to load pages", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
-export async function POST(req: Request, ctx: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   try {
-    const teamId = Number(ctx.params.id);
+    const { id } = await params;
+    const teamId = Number(id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
@@ -36,7 +43,10 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     const pageLabel = String(body?.pageLabel || "").trim();
 
     if (!pageKey || !pageLabel) {
-      return NextResponse.json({ error: "pageKey and pageLabel are required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "pageKey and pageLabel are required" },
+        { status: 400 }
+      );
     }
 
     const db = websiteDb();
@@ -52,13 +62,18 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to add page", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to add page", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
-    const teamId = Number(ctx.params.id);
+    const { id } = await params;
+    const teamId = Number(id);
+
     const { searchParams } = new URL(req.url);
     const pageKey = String(searchParams.get("pageKey") || "").trim().toLowerCase();
 
@@ -66,10 +81,16 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
     if (!pageKey) return NextResponse.json({ error: "pageKey is required" }, { status: 400 });
 
     const db = websiteDb();
-    await db.query(`DELETE FROM roster_team_pages WHERE team_id=$1 AND page_key=$2`, [teamId, pageKey]);
+    await db.query(`DELETE FROM roster_team_pages WHERE team_id=$1 AND page_key=$2`, [
+      teamId,
+      pageKey,
+    ]);
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: "failed to delete page", detail: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "failed to delete page", detail: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
