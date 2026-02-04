@@ -7,13 +7,13 @@ export const revalidate = 0;
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(params.id);
+    const teamId = Number(context.params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const db = websiteDb();

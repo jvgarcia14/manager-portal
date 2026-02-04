@@ -7,13 +7,13 @@ export const revalidate = 0;
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(params.id);
+    const teamId = Number(context.params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
@@ -30,7 +30,6 @@ export async function POST(
     for (const p of pages) {
       const pageKey = String(p?.pageKey || "").trim().toLowerCase();
       const pageLabel = String(p?.pageLabel || "").trim();
-
       if (!pageKey || !pageLabel) continue;
 
       tuples.push(`($${i++}, $${i++}, $${i++})`);

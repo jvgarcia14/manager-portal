@@ -8,13 +8,13 @@ export const revalidate = 0;
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(params.id);
+    const teamId = Number(context.params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const db = websiteDb();
@@ -28,7 +28,7 @@ export async function GET(
       [teamId]
     );
 
-    // seed defaults if empty
+    // ✅ seed defaults if team has no pages yet
     if ((r.rows?.length || 0) === 0) {
       const values: any[] = [];
       const tuples: string[] = [];
@@ -73,13 +73,13 @@ export async function GET(
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(params.id);
+    const teamId = Number(context.params.id);
     if (!teamId) return NextResponse.json({ error: "invalid team id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
@@ -112,13 +112,13 @@ export async function POST(
 
 export async function DELETE(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const gate = await requireApproved();
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 403 });
 
   try {
-    const teamId = Number(params.id);
+    const teamId = Number(context.params.id);
 
     const { searchParams } = new URL(req.url);
     const pageKey = String(searchParams.get("pageKey") || "").trim().toLowerCase();
