@@ -72,6 +72,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             Admin
           </Link>
         ) : null}
+
+        {/* ✅ Pages manager (admin only) */}
+        {isAdmin ? (
+          <Link
+            href="/dashboard/pages"
+            className="btn"
+            style={tabStyle(isActive("/dashboard/pages")) as any}
+          >
+            Pages
+          </Link>
+        ) : null}
       </div>
 
       <div className="spacer" />
