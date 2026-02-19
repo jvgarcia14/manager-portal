@@ -262,10 +262,17 @@ export default function MasterlistPage() {
 
               <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
                 <select
-                  className="input"
                   value={tierDays}
                   onChange={(e) => setTierDays(Number(e.target.value))}
-                  style={{ padding: "10px 12px" }}
+                  style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,.12)",
+                  background: "rgba(10,10,18,.9)",
+                  color: "white",
+                  outline: "none",
+                  minWidth: 120,
+                 }}
                 >
                   <option value={7}>7 days</option>
                   <option value={14}>14 days</option>

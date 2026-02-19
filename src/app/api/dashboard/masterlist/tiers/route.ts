@@ -16,15 +16,16 @@ function tierFromPercentile(rank: number, total: number) {
   return 1;
 }
 
-async function detectSalesCols() {
+async function getCols(table: string) {
   const { rows } = await salesPool.query(
-    `select column_name from information_schema.columns where table_name = 'sales'`
+    `select column_name from information_schema.columns where table_name = $1`,
+    [table]
   );
   return new Set(rows.map((r: any) => r.column_name));
 }
 
-function pick(cols: Set<string>, list: string[]) {
-  for (const c of list) if (cols.has(c)) return c;
+function pick(cols: Set<string>, candidates: string[]) {
+  for (const c of candidates) if (cols.has(c)) return c;
   return null;
 }
 
@@ -39,58 +40,62 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const days = Number(searchParams.get("days") || "30");
 
-    // If your table isn't named 'sales', tell me and I’ll adjust.
-    const cols = await detectSalesCols();
+    // If your table name is not "sales", tell me and I’ll change it.
+    const table = "sales";
+    const cols = await getCols(table);
 
-    const colAmount = pick(cols, ["amount", "sale_amount", "sales", "total"]);
-    const colCreated = pick(cols, ["created_at", "date", "sold_at", "timestamp"]);
-    const colUser = pick(cols, ["tg_username", "username", "chatter_username"]);
+    // Detect amount + date + chatter identity columns
+    const colAmount = pick(cols, ["amount", "sale_amount", "total", "sales", "usd", "net"]);
+    const colDate = pick(cols, ["created_at", "date", "sold_at", "timestamp", "ts", "day"]);
+    const colUser = pick(cols, ["tg_username", "username", "chatter_username", "chatter"]);
+    const colName = pick(cols, ["display_name", "name"]);
     const colFirst = pick(cols, ["tg_first_name", "first_name"]);
     const colLast = pick(cols, ["tg_last_name", "last_name"]);
-    const colName = pick(cols, ["display_name", "name"]);
 
-    if (!colAmount || !colCreated) {
+    if (!colAmount) {
       return NextResponse.json(
-        { ok: false, error: "Sales table missing amount/created_at columns. Paste your sales schema." },
+        { ok: false, error: "Sales table: can't find amount column. Tell me your amount column name." },
         { status: 500 }
       );
     }
 
-    // Group by username (preferred) OR display_name if no username exists
-    const groupKey = colUser ? colUser : (colName ? colName : null);
+    // Group by chatter username if available, else name
+    const groupKey = colUser || colName;
     if (!groupKey) {
       return NextResponse.json(
-        { ok: false, error: "Sales table missing username/name to group by. Paste your sales schema." },
+        { ok: false, error: "Sales table: can't find chatter username/name column to group by." },
         { status: 500 }
       );
     }
 
-    const selectName = colName ? `${colName} as display_name` : "null as display_name";
-    const selectFirst = colFirst ? `${colFirst} as first_name` : "null as first_name";
-    const selectLast = colLast ? `${colLast} as last_name` : "null as last_name";
-    const selectUser = colUser ? `${colUser} as tg_username` : "null as tg_username";
+    const whereDate = colDate
+      ? `where ${colDate} >= now() - ($1 || ' days')::interval`
+      : ""; // if no date col, we just compute all-time
+
+    const params: any[] = [];
+    if (colDate) params.push(days);
 
     const { rows } = await salesPool.query(
       `
       select
         ${groupKey} as group_key,
-        max(${selectName}) as display_name,
-        max(${selectFirst}) as first_name,
-        max(${selectLast}) as last_name,
-        max(${selectUser}) as tg_username,
+        max(${colName ? colName : groupKey}) as display_name,
+        max(${colUser ? colUser : groupKey}) as tg_username,
+        max(${colFirst ? colFirst : groupKey}) as first_name,
+        max(${colLast ? colLast : groupKey}) as last_name,
         coalesce(sum(${colAmount}), 0) as total_sales
-      from sales
-      where ${colCreated} >= now() - ($1 || ' days')::interval
+      from ${table}
+      ${whereDate}
       group by ${groupKey}
       order by total_sales desc
       `,
-      [days]
+      params
     );
 
     const total = rows.length;
     const tiers = rows.map((r: any, i: number) => {
-      const displayFromParts = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
       const username = normalizeUsername(r.tg_username);
+      const displayFromParts = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
 
       const displayName =
         String(r.display_name || "").trim() ||
@@ -98,6 +103,7 @@ export async function GET(req: Request) {
         (username ? `@${username}` : String(r.group_key || "Unknown"));
 
       return {
+        chatterId: r.group_key,
         displayName,
         username: username ? `@${username}` : "",
         totalSales: Number(r.total_sales || 0),
@@ -105,7 +111,12 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ ok: true, days, tiers });
+    return NextResponse.json({
+      ok: true,
+      daysUsed: colDate ? days : null,
+      note: colDate ? null : "No date column found; showing ALL-TIME totals.",
+      tiers,
+    });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }

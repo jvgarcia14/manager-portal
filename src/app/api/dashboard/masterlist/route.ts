@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { ensureWebsiteSchema, websitePool } from "@/lib/websiteDb";
 import { EXPECTED_PAGE_LIST } from "@/lib/expectedPages";
 
-// Attendance DB pool (same as your attendance/today route)
+// Attendance DB pool
 const attendancePool = new Pool({
   connectionString: process.env.ATTENDANCE_DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -19,20 +19,15 @@ function attendanceDayPH(now = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-async function getClockinColumns() {
-  // Detect which columns exist so we can safely pull Telegram display name + username
-  const { rows } = await attendancePool.query(
-    `
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_name = 'attendance_clockins'
-    `
+async function getCols(table: string, pool: Pool) {
+  const { rows } = await pool.query(
+    `select column_name from information_schema.columns where table_name = $1`,
+    [table]
   );
-  const cols = new Set(rows.map((r: any) => r.column_name));
-  return cols;
+  return new Set(rows.map((r: any) => r.column_name));
 }
 
-function bestField(cols: Set<string>, candidates: string[]) {
+function pick(cols: Set<string>, candidates: string[]) {
   for (const c of candidates) if (cols.has(c)) return c;
   return null;
 }
@@ -44,122 +39,158 @@ function normalizeUsername(u: any) {
 }
 
 export async function GET() {
+  const day = attendanceDayPH();
+
+  // Always return pages list even if attendance DB fails
+  const basePages = EXPECTED_PAGE_LIST.map((p) => ({
+    pageKey: p.pageKey,
+    pageLabel: p.pageLabel,
+    prime: null,
+    midshift: null,
+    closing: null,
+  }));
+
   try {
     await ensureWebsiteSchema();
 
-    const day = attendanceDayPH();
-
-    // 1) Saved main slots (website DB)
-    const saved = await websitePool.query(
-      `select page_key, shift, main_tg_username, main_display_name
-       from masterlist_slots`
+    // 1) Load saved slots from WEBSITE DB (fallback when no one clocked in)
+    const savedRes = await websitePool.query(
+      `select page_key, shift, main_tg_username, main_display_name from masterlist_slots`
     );
     const savedMap = new Map<string, { displayName: string; username: string }>();
-    for (const r of saved.rows) {
+    for (const r of savedRes.rows) {
       savedMap.set(`${r.page_key}:${r.shift}`, {
         displayName: String(r.main_display_name || "").trim(),
         username: normalizeUsername(r.main_tg_username),
       });
     }
 
-    // 2) Attendance DB: get clockins (detailed)
-    const cols = await getClockinColumns();
+    // 2) Attendance table column detection
+    const cols = await getCols("attendance_clockins", attendancePool);
 
-    // Try common column names (we auto-detect)
-    const colFirst = bestField(cols, ["tg_first_name", "first_name", "telegram_first_name"]);
-    const colLast = bestField(cols, ["tg_last_name", "last_name", "telegram_last_name"]);
-    const colUser = bestField(cols, ["tg_username", "username", "telegram_username", "user_name"]);
-    const colName = bestField(cols, ["display_name", "tg_name", "name"]);
+    const colShift = pick(cols, ["shift"]);
+    const colPage = pick(cols, ["page_key", "pagekey", "page"]);
+    const colCover = pick(cols, ["is_cover", "cover"]);
+    const colDay = pick(cols, ["attendance_day", "day"]);
 
-    // Build SELECT safely
-    const selectParts = [
-      "shift",
-      "page_key",
-      "is_cover",
+    // Telegram identity cols (use whatever exists)
+    const colFirst = pick(cols, ["tg_first_name", "first_name", "telegram_first_name"]);
+    const colLast = pick(cols, ["tg_last_name", "last_name", "telegram_last_name"]);
+    const colUser = pick(cols, ["tg_username", "username", "telegram_username", "user_name"]);
+    const colName = pick(cols, ["display_name", "tg_name", "name"]);
+
+    // Timestamp/order column (THIS FIXES YOUR created_at error)
+    const colTime = pick(cols, [
       "created_at",
-      colFirst ? `${colFirst} as first_name` : "null as first_name",
-      colLast ? `${colLast} as last_name` : "null as last_name",
-      colUser ? `${colUser} as tg_username` : "null as tg_username",
-      colName ? `${colName} as display_name` : "null as display_name",
+      "clocked_in_at",
+      "clockin_at",
+      "clock_in_at",
+      "timestamp",
+      "ts",
+      "time",
+      "inserted_at",
+      "id", // fallback: order by id if no timestamp exists
+    ]);
+
+    if (!colShift || !colPage || !colCover || !colDay) {
+      return NextResponse.json({
+        ok: false,
+        error:
+          "attendance_clockins is missing required columns (shift/page_key/is_cover/attendance_day). Paste table columns list.",
+        attendance_day: day,
+        pages: basePages,
+      });
+    }
+
+    const selectParts = [
+      `${colShift} as shift`,
+      `${colPage} as page_key`,
+      `${colCover} as is_cover`,
+      colFirst ? `${colFirst} as first_name` : `null as first_name`,
+      colLast ? `${colLast} as last_name` : `null as last_name`,
+      colUser ? `${colUser} as tg_username` : `null as tg_username`,
+      colName ? `${colName} as display_name` : `null as display_name`,
     ];
+
+    const orderBy = colTime ? `order by ${colTime} asc` : "";
 
     const clockinsRes = await attendancePool.query(
       `
-      SELECT ${selectParts.join(", ")}
-      FROM attendance_clockins
-      WHERE attendance_day = $1
-      ORDER BY created_at ASC
+      select ${selectParts.join(", ")}
+      from attendance_clockins
+      where ${colDay} = $1
+      ${orderBy}
       `,
       [day]
     );
 
-    // Pick 1 chatter per page+shift (prefer MAIN over COVER, but still show #cover if only cover exists)
-    type Slot = { displayName: string; username: string; isCover: boolean };
+    // Live map: choose 1 person per (page_key, shift) preferring MAIN over COVER
+    type Slot = { displayName: string; username: string; isCover: boolean; source: "attendance" | "saved" };
     const liveMap = new Map<string, Slot>();
 
     for (const r of clockinsRes.rows) {
       const key = `${String(r.page_key)}:${String(r.shift)}`;
       const isCover = !!r.is_cover;
 
-      const displayNameFromParts = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
+      const displayFromParts = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
+      const username = normalizeUsername(r.tg_username);
+
       const displayName =
         String(r.display_name || "").trim() ||
-        displayNameFromParts ||
-        (r.tg_username ? `@${String(r.tg_username).replace(/^@/, "")}` : "Unknown");
+        displayFromParts ||
+        (username ? `@${username}` : "Unknown");
 
-      const username = r.tg_username ? normalizeUsername(r.tg_username) : "";
+      const candidate: Slot = {
+        displayName,
+        username: username ? `@${username}` : "",
+        isCover,
+        source: "attendance",
+      };
 
-      // Prefer a non-cover if we have both
+      // prefer MAIN
       if (!liveMap.has(key)) {
-        liveMap.set(key, { displayName, username, isCover });
+        liveMap.set(key, candidate);
       } else {
         const existing = liveMap.get(key)!;
-        if (existing.isCover && !isCover) {
-          liveMap.set(key, { displayName, username, isCover });
+        if (existing.isCover && !candidate.isCover) {
+          liveMap.set(key, candidate);
         }
       }
     }
 
-    // 3) Build response per expected page
-    const pages = EXPECTED_PAGE_LIST.map((p) => {
-      const page_key = p.pageKey;
-      const page_label = p.pageLabel;
+    // Merge into basePages
+    const pages = basePages.map((p) => {
+      const pageKey = p.pageKey;
 
-      const buildShift = (shift: typeof SHIFTS[number]) => {
-        const live = liveMap.get(`${page_key}:${shift}`);
-        if (live) {
-          return {
-            displayName: live.displayName,
-            username: live.username ? `@${live.username}` : "",
-            isCover: live.isCover,
-            source: "attendance" as const,
-          };
-        }
+      const pickSlot = (shift: "prime" | "midshift" | "closing"): Slot | null => {
+        const live = liveMap.get(`${pageKey}:${shift}`);
+        if (live) return live;
 
-        const saved = savedMap.get(`${page_key}:${shift}`);
+        const saved = savedMap.get(`${pageKey}:${shift}`);
         if (saved && (saved.displayName || saved.username)) {
           return {
             displayName: saved.displayName || (saved.username ? `@${saved.username}` : "—"),
             username: saved.username ? `@${saved.username}` : "",
             isCover: false,
-            source: "saved" as const,
+            source: "saved",
           };
         }
-
         return null;
       };
 
       return {
-        pageKey: page_key,
-        pageLabel: page_label,
-        prime: buildShift("prime"),
-        midshift: buildShift("midshift"),
-        closing: buildShift("closing"),
+        ...p,
+        prime: pickSlot("prime"),
+        midshift: pickSlot("midshift"),
+        closing: pickSlot("closing"),
       };
     });
 
     return NextResponse.json({ ok: true, attendance_day: day, pages });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: String(e?.message || e), attendance_day: day, pages: basePages },
+      { status: 500 }
+    );
   }
 }
