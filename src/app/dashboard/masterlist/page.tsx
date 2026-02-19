@@ -1,4 +1,3 @@
-// src/app/dashboard/masterlist/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -7,7 +6,7 @@ type Slot = null | {
   chatterId?: string | number;
   isCover: boolean;
   displayName: string;
-  username: string; // may include @, we will sanitize
+  username: string; // may include @, we sanitize
   source?: "attendance" | "saved";
 };
 
@@ -24,6 +23,7 @@ type TierRow = {
   displayName: string;
   username: string;
   totalSales: number;
+  dailyAvg?: number;
   tier: number;
 };
 
@@ -41,13 +41,8 @@ async function safeJson(url: string) {
 
 function cleanDisplayName(name: string) {
   let s = String(name || "").trim();
-
-  // Remove any @username accidentally embedded in displayName
-  s = s.replace(/@\w+/g, "").trim();
-
-  // Collapse multiple spaces
-  s = s.replace(/\s+/g, " ");
-
+  s = s.replace(/@\w+/g, "").trim(); // remove embedded @username
+  s = s.replace(/\s+/g, " "); // collapse spaces
   return s;
 }
 
@@ -62,13 +57,6 @@ function dedupeName(name: string) {
   const s = String(name || "").trim();
   if (!s) return s;
 
-  // If full string repeats twice, remove duplicate
-  const mid = Math.floor(s.length / 2);
-  const a = s.slice(0, mid).trim();
-  const b = s.slice(mid).trim();
-  if (a && b && a === b) return a;
-
-  // If name is like "Diana Rose Eugenio Diana Rose Eugenio"
   const parts = s.split(" ");
   const half = Math.floor(parts.length / 2);
   if (half > 0) {
@@ -76,7 +64,6 @@ function dedupeName(name: string) {
     const right = parts.slice(half).join(" ");
     if (left === right) return left;
   }
-
   return s;
 }
 
@@ -93,6 +80,28 @@ function NameLine({ slot }: { slot: Slot }) {
       {slot.isCover ? (
         <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 shrink-0">#cover</span>
       ) : null}
+    </div>
+  );
+}
+
+function ShiftRow({ label, slot }: { label: string; slot: Slot }) {
+  return (
+    <div
+      className="row"
+      style={{
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "10px 12px",
+        borderRadius: 14,
+        border: "1px solid rgba(255,255,255,.08)",
+        background: "rgba(255,255,255,.03)",
+        gap: 10,
+      }}
+    >
+      <span className="small" style={{ opacity: 0.75 }}>
+        {label}
+      </span>
+      <NameLine slot={slot} />
     </div>
   );
 }
@@ -130,17 +139,11 @@ export default function MasterlistPage() {
   const filteredPages = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return pages;
-
-    return pages.filter((p) => {
-      const hay = `${p.pageKey} ${p.pageLabel}`.toLowerCase();
-      return hay.includes(q);
-    });
+    return pages.filter((p) => `${p.pageKey} ${p.pageLabel}`.toLowerCase().includes(q));
   }, [pages, query]);
 
   async function openTiers() {
     setTiersOpen(true);
-
-    // Load on open (and reload if tierDays changed)
     setTiersLoading(true);
     setTiersErr("");
     try {
@@ -224,12 +227,10 @@ export default function MasterlistPage() {
         <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))" }}>
           {filteredPages.map((p) => (
             <div key={p.pageKey} className="card" style={{ padding: 14 }}>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 16 }}>{p.pageLabel}</div>
-                  <div className="small" style={{ opacity: 0.65 }}>
-                    #{p.pageKey}
-                  </div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>{p.pageLabel}</div>
+                <div className="small" style={{ opacity: 0.65 }}>
+                  #{p.pageKey}
                 </div>
               </div>
 
@@ -248,12 +249,12 @@ export default function MasterlistPage() {
       {/* TIERS MODAL */}
       {tiersOpen ? (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl card" style={{ padding: 16 }}>
+          <div className="w-full max-w-4xl card" style={{ padding: 16 }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>Chatters &amp; Tiers</div>
                 <div className="small" style={{ opacity: 0.7 }}>
-                  Based on chatter sales totals (last {tierDays} days).
+                  Tier is based on daily average (last {tierDays} days).
                 </div>
               </div>
 
@@ -323,19 +324,53 @@ export default function MasterlistPage() {
                       <th style={{ textAlign: "left", padding: 12 }}>Chatter</th>
                       <th style={{ textAlign: "left", padding: 12 }}>@</th>
                       <th style={{ textAlign: "left", padding: 12 }}>Total Sales</th>
+                      <th style={{ textAlign: "left", padding: 12 }}>Daily Avg</th>
                       <th style={{ textAlign: "left", padding: 12 }}>Tier</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {tiers.map((t, idx) => {
                       const uname = cleanUsername(t.username);
                       const nm = dedupeName(cleanDisplayName(t.displayName));
+                      const daily = Number(t.dailyAvg || 0);
+
+                      // color by tier: green best, yellow mid, red low
+                      const bg =
+                        t.tier >= 4
+                          ? "rgba(80, 220, 140, .20)"
+                          : t.tier === 3
+                          ? "rgba(240, 200, 90, .18)"
+                          : "rgba(255, 90, 90, .18)";
+
+                      const bd =
+                        t.tier >= 4
+                          ? "rgba(80, 220, 140, .35)"
+                          : t.tier === 3
+                          ? "rgba(240, 200, 90, .30)"
+                          : "rgba(255, 90, 90, .30)";
+
                       return (
-                        <tr key={`${uname || nm}-${idx}`} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                          <td style={{ padding: 12, fontWeight: 700 }}>{nm || "Unknown"}</td>
-                          <td style={{ padding: 12, opacity: 0.8 }}>{uname ? `@${uname}` : "—"}</td>
+                        <tr key={`${t.chatterId}-${idx}`} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                          <td style={{ padding: 12, fontWeight: 800 }}>{nm || "Unknown"}</td>
+                          <td style={{ padding: 12, opacity: 0.85 }}>{uname ? `@${uname}` : "—"}</td>
                           <td style={{ padding: 12 }}>{Number(t.totalSales || 0).toLocaleString()}</td>
-                          <td style={{ padding: 12 }}>Tier {t.tier}</td>
+                          <td style={{ padding: 12, opacity: 0.9 }}>{daily.toLocaleString()} / day</td>
+                          <td style={{ padding: 12 }}>
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                border: `1px solid ${bd}`,
+                                background: bg,
+                                fontWeight: 900,
+                              }}
+                            >
+                              Tier {t.tier}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
@@ -346,28 +381,6 @@ export default function MasterlistPage() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ShiftRow({ label, slot }: { label: string; slot: Slot }) {
-  return (
-    <div
-      className="row"
-      style={{
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "10px 12px",
-        borderRadius: 14,
-        border: "1px solid rgba(255,255,255,.08)",
-        background: "rgba(255,255,255,.03)",
-        gap: 10,
-      }}
-    >
-      <span className="small" style={{ opacity: 0.75 }}>
-        {label}
-      </span>
-      <NameLine slot={slot} />
     </div>
   );
 }
