@@ -8,7 +8,7 @@ const salesPool = new Pool({
 
 function tierFromPercentile(rank: number, total: number) {
   if (total <= 0) return 1;
-  const p = (rank + 1) / total;
+  const p = (rank + 1) / total; // rank 0 = best
   if (p <= 0.1) return 5;
   if (p <= 0.3) return 4;
   if (p <= 0.6) return 3;
@@ -19,58 +19,70 @@ function tierFromPercentile(rank: number, total: number) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const days = Math.max(1, Number(searchParams.get("days") || "30"));
-    const teamFilter = String(searchParams.get("team") || "").trim();
 
+    const days = Math.max(1, Number(searchParams.get("days") || "30"));
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-    // ✅ SALES grouped by PAGE
-    const sql = `
+    // ✅ Group by chatter chat_id (this is the sender / chatter)
+    // Join teams to show chatter name (teams.chat_id, teams.name)
+    const res = await salesPool.query(
+      `
       SELECT
-        tp.team,
-        t.name as chatter_name,
-        SUM(s.amount) as total_sales
+        s.chat_id,
+        COALESCE(t.name, 'Chatter ' || s.chat_id::text) AS display_name,
+        COALESCE(SUM(s.amount), 0) AS total_sales
       FROM sales s
-      LEFT JOIN team_pages tp ON tp.page = s.page
-      LEFT JOIN teams t ON t.chat_id = tp.team
-      WHERE s.ts >= $1
-        ${teamFilter ? "AND tp.team = $2" : ""}
-      GROUP BY tp.team, t.name
+      LEFT JOIN teams t ON t.chat_id = s.chat_id
+      WHERE s.chat_id IS NOT NULL
+        AND s.ts >= $1
+      GROUP BY s.chat_id, t.name
       ORDER BY total_sales DESC
-    `;
+      `,
+      [from]
+    );
 
-    const params = teamFilter ? [from, teamFilter] : [from];
-
-    const res = await salesPool.query(sql, params);
     const rows = res.rows || [];
 
+    // If still empty, return helpful stats (so we can see what's missing)
     if (rows.length === 0) {
+      const stats = await salesPool.query(`
+        SELECT
+          COUNT(*)::int AS total_rows,
+          SUM(CASE WHEN chat_id IS NULL THEN 1 ELSE 0 END)::int AS null_chat_id_rows,
+          MIN(ts) AS min_ts,
+          MAX(ts) AS max_ts
+        FROM sales
+      `);
+
       return NextResponse.json({
         ok: true,
         days,
-        team: teamFilter || null,
+        from: from.toISOString(),
         tiers: [],
+        debug: stats.rows?.[0] || null,
+        note:
+          "No rows matched (chat_id not null + within date range). Check if sales.chat_id is being saved, or if ts timezone/range is wrong.",
       });
     }
 
+    // daily average + tier based on daily average
     const withAvg = rows.map((r: any) => {
       const totalSales = Number(r.total_sales || 0);
       const dailyAvg = totalSales / days;
 
       return {
-        chatterId: String(r.team),
-        displayName: r.chatter_name || `Team ${r.team}`,
-        username: "",
+        chatterId: String(r.chat_id),
+        displayName: String(r.display_name || "").trim(),
+        username: "", // not stored in sales schema you showed
         totalSales: Math.round(totalSales * 100) / 100,
         dailyAvg: Math.round(dailyAvg * 100) / 100,
       };
     });
 
-    // Sort by daily avg
+    // sort by daily average for tiering
     withAvg.sort((a, b) => b.dailyAvg - a.dailyAvg);
 
     const total = withAvg.length;
-
     const tiers = withAvg.map((r, i) => ({
       ...r,
       tier: tierFromPercentile(i, total),
@@ -79,13 +91,10 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       days,
-      team: teamFilter || null,
+      from: from.toISOString(),
       tiers,
     });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: String(e?.message || e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
