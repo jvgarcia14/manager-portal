@@ -57,6 +57,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           Attendance
         </Link>
 
+        {/* ✅ NEW: Masterlist (everyone can access, same as roster) */}
+        <Link
+          href="/dashboard/masterlist"
+          className="btn"
+          style={tabStyle(isActive("/dashboard/masterlist")) as any}
+        >
+          Masterlist
+        </Link>
+
         {/* ✅ Everyone can access roster (editable by any approved user) */}
         <Link
           href="/dashboard/roster"
