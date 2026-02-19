@@ -7,7 +7,7 @@ type Slot = null | {
   chatterId?: string | number;
   isCover: boolean;
   displayName: string;
-  username: string; // includes @
+  username: string; // may include @, we will sanitize
   source?: "attendance" | "saved";
 };
 
@@ -39,17 +39,59 @@ async function safeJson(url: string) {
   }
 }
 
+function cleanDisplayName(name: string) {
+  let s = String(name || "").trim();
+
+  // Remove any @username accidentally embedded in displayName
+  s = s.replace(/@\w+/g, "").trim();
+
+  // Collapse multiple spaces
+  s = s.replace(/\s+/g, " ");
+
+  return s;
+}
+
+function cleanUsername(u: string) {
+  const s = String(u || "").trim();
+  if (!s) return "";
+  const noAt = s.replace(/^@+/, "");
+  return noAt.replace(/[^\w]/g, "");
+}
+
+function dedupeName(name: string) {
+  const s = String(name || "").trim();
+  if (!s) return s;
+
+  // If full string repeats twice, remove duplicate
+  const mid = Math.floor(s.length / 2);
+  const a = s.slice(0, mid).trim();
+  const b = s.slice(mid).trim();
+  if (a && b && a === b) return a;
+
+  // If name is like "Diana Rose Eugenio Diana Rose Eugenio"
+  const parts = s.split(" ");
+  const half = Math.floor(parts.length / 2);
+  if (half > 0) {
+    const left = parts.slice(0, half).join(" ");
+    const right = parts.slice(half).join(" ");
+    if (left === right) return left;
+  }
+
+  return s;
+}
+
 function NameLine({ slot }: { slot: Slot }) {
   if (!slot) return <span className="opacity-60">—</span>;
 
+  const realName = dedupeName(cleanDisplayName(slot.displayName));
+  const uname = cleanUsername(slot.username);
+
   return (
     <div className="flex items-center gap-2 justify-end">
-      <span className="font-medium">{slot.displayName}</span>
-
-      {slot.username ? <span className="opacity-70">{slot.username}</span> : null}
-
+      <span className="font-medium max-w-[180px] truncate text-right">{realName || "Unknown"}</span>
+      {uname ? <span className="opacity-70 shrink-0">@{uname}</span> : null}
       {slot.isCover ? (
-        <span className="text-xs px-2 py-0.5 rounded-full bg-white/10">#cover</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 shrink-0">#cover</span>
       ) : null}
     </div>
   );
@@ -97,8 +139,8 @@ export default function MasterlistPage() {
 
   async function openTiers() {
     setTiersOpen(true);
-    if (tiers.length) return;
 
+    // Load on open (and reload if tierDays changed)
     setTiersLoading(true);
     setTiersErr("");
     try {
@@ -106,6 +148,7 @@ export default function MasterlistPage() {
       setTiers((data.tiers || []) as TierRow[]);
     } catch (e: any) {
       setTiersErr(e?.message || "Failed to load tiers");
+      setTiers([]);
     } finally {
       setTiersLoading(false);
     }
@@ -119,6 +162,7 @@ export default function MasterlistPage() {
       setTiers((data.tiers || []) as TierRow[]);
     } catch (e: any) {
       setTiersErr(e?.message || "Failed to load tiers");
+      setTiers([]);
     } finally {
       setTiersLoading(false);
     }
@@ -140,7 +184,7 @@ export default function MasterlistPage() {
           </button>
 
           <button className="btn btnPrimary" onClick={openTiers}>
-            Chatters & Tiers
+            Chatters &amp; Tiers
           </button>
         </div>
       </div>
@@ -192,56 +236,9 @@ export default function MasterlistPage() {
               <div className="spacer" />
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div
-                  className="row"
-                  style={{
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,.08)",
-                    background: "rgba(255,255,255,.03)",
-                  }}
-                >
-                  <span className="small" style={{ opacity: 0.75 }}>
-                    Prime
-                  </span>
-                  <NameLine slot={p.prime} />
-                </div>
-
-                <div
-                  className="row"
-                  style={{
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,.08)",
-                    background: "rgba(255,255,255,.03)",
-                  }}
-                >
-                  <span className="small" style={{ opacity: 0.75 }}>
-                    Midshift
-                  </span>
-                  <NameLine slot={p.midshift} />
-                </div>
-
-                <div
-                  className="row"
-                  style={{
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,.08)",
-                    background: "rgba(255,255,255,.03)",
-                  }}
-                >
-                  <span className="small" style={{ opacity: 0.75 }}>
-                    Closing
-                  </span>
-                  <NameLine slot={p.closing} />
-                </div>
+                <ShiftRow label="Prime" slot={p.prime} />
+                <ShiftRow label="Midshift" slot={p.midshift} />
+                <ShiftRow label="Closing" slot={p.closing} />
               </div>
             </div>
           ))}
@@ -254,7 +251,7 @@ export default function MasterlistPage() {
           <div className="w-full max-w-3xl card" style={{ padding: 16 }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 800 }}>Chatters & Tiers</div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Chatters &amp; Tiers</div>
                 <div className="small" style={{ opacity: 0.7 }}>
                   Based on chatter sales totals (last {tierDays} days).
                 </div>
@@ -265,14 +262,14 @@ export default function MasterlistPage() {
                   value={tierDays}
                   onChange={(e) => setTierDays(Number(e.target.value))}
                   style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,.12)",
-                  background: "rgba(10,10,18,.9)",
-                  color: "white",
-                  outline: "none",
-                  minWidth: 120,
-                 }}
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,.12)",
+                    background: "rgba(10,10,18,.9)",
+                    color: "white",
+                    outline: "none",
+                    minWidth: 120,
+                  }}
                 >
                   <option value={7}>7 days</option>
                   <option value={14}>14 days</option>
@@ -285,7 +282,13 @@ export default function MasterlistPage() {
                   {tiersLoading ? "Refreshing…" : "Refresh"}
                 </button>
 
-                <button className="btn" onClick={() => setTiersOpen(false)}>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setTiersOpen(false);
+                    setTiersErr("");
+                  }}
+                >
                   Close
                 </button>
               </div>
@@ -324,14 +327,18 @@ export default function MasterlistPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {tiers.map((t, idx) => (
-                      <tr key={`${t.username}-${idx}`} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                        <td style={{ padding: 12, fontWeight: 700 }}>{t.displayName}</td>
-                        <td style={{ padding: 12, opacity: 0.8 }}>{t.username || "—"}</td>
-                        <td style={{ padding: 12 }}>{Number(t.totalSales || 0).toLocaleString()}</td>
-                        <td style={{ padding: 12 }}>Tier {t.tier}</td>
-                      </tr>
-                    ))}
+                    {tiers.map((t, idx) => {
+                      const uname = cleanUsername(t.username);
+                      const nm = dedupeName(cleanDisplayName(t.displayName));
+                      return (
+                        <tr key={`${uname || nm}-${idx}`} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                          <td style={{ padding: 12, fontWeight: 700 }}>{nm || "Unknown"}</td>
+                          <td style={{ padding: 12, opacity: 0.8 }}>{uname ? `@${uname}` : "—"}</td>
+                          <td style={{ padding: 12 }}>{Number(t.totalSales || 0).toLocaleString()}</td>
+                          <td style={{ padding: 12 }}>Tier {t.tier}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -339,6 +346,28 @@ export default function MasterlistPage() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ShiftRow({ label, slot }: { label: string; slot: Slot }) {
+  return (
+    <div
+      className="row"
+      style={{
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "10px 12px",
+        borderRadius: 14,
+        border: "1px solid rgba(255,255,255,.08)",
+        background: "rgba(255,255,255,.03)",
+        gap: 10,
+      }}
+    >
+      <span className="small" style={{ opacity: 0.75 }}>
+        {label}
+      </span>
+      <NameLine slot={slot} />
     </div>
   );
 }
