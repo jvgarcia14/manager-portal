@@ -24,6 +24,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // ✅ active if exact OR subpages
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
+  // ✅ Ticket badge (open tickets count) - safe even if API fails
+  const [ticketBadge, setTicketBadge] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    // only fetch if user is logged in (optional safety)
+    if (!session) return;
+
+    fetch("/api/tickets", { cache: "no-store" as any })
+      .then((r) => r.json())
+      .then((rows) => {
+        if (!Array.isArray(rows)) return;
+        const openCount = rows.filter((t: any) => String(t?.status || "").toLowerCase() === "open").length;
+        setTicketBadge(openCount);
+      })
+      .catch(() => {
+        // fail silently so it never breaks layout
+      });
+  }, [session]);
+
   return (
     <div className="container">
       <div className="nav">
@@ -67,12 +86,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </Link>
 
         {/* ✅ Everyone can access roster (editable by any approved user) */}
-        <Link
-          href="/dashboard/roster"
-          className="btn"
-          style={tabStyle(isActive("/dashboard/roster")) as any}
-        >
+        <Link href="/dashboard/roster" className="btn" style={tabStyle(isActive("/dashboard/roster")) as any}>
           Roster
+        </Link>
+
+        {/* ✅ NEW: Tickets (everyone can access) */}
+        <Link
+          href="/dashboard/tickets"
+          className="btn"
+          style={{
+            ...(tabStyle(isActive("/dashboard/tickets")) as any),
+            position: "relative",
+            paddingRight: ticketBadge > 0 ? "34px" : (tabStyle(isActive("/dashboard/tickets")) as any).padding,
+          }}
+        >
+          Tickets
+          {ticketBadge > 0 ? (
+            <span
+              style={{
+                position: "absolute",
+                right: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                borderRadius: 999,
+                padding: "2px 8px",
+                fontSize: 12,
+                border: "1px solid rgba(255,255,255,.18)",
+                background: "rgba(120,120,255,.18)",
+              }}
+            >
+              {ticketBadge}
+            </span>
+          ) : null}
         </Link>
 
         {/* ✅ Admin page shortcut (admin only) */}
@@ -84,11 +129,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* ✅ Pages manager (admin only) */}
         {isAdmin ? (
-          <Link
-            href="/dashboard/pages"
-            className="btn"
-            style={tabStyle(isActive("/dashboard/pages")) as any}
-          >
+          <Link href="/dashboard/pages" className="btn" style={tabStyle(isActive("/dashboard/pages")) as any}>
             Pages
           </Link>
         ) : null}
