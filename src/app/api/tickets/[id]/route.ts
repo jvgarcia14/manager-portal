@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { initTicketTables } from "@/lib/initTickets";
 
+// ✅ Force Node runtime (pg doesn't work on Edge)
+export const runtime = "nodejs";
+
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -12,23 +15,31 @@ export async function GET(
 
     const db = websiteDb();
 
-    const ticket = await db.query(`SELECT * FROM tickets WHERE id = $1`, [id]);
-    if (!ticket.rows[0]) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+    const ticketRes = await db.query(`SELECT * FROM tickets WHERE id = $1`, [id]);
+    const ticket = ticketRes.rows[0];
+
+    if (!ticket) {
+      return NextResponse.json({ error: "Ticket not found", id }, { status: 404 });
     }
 
-    const replies = await db.query(
+    const repliesRes = await db.query(
       `SELECT * FROM ticket_replies WHERE ticket_id = $1 ORDER BY created_at ASC`,
       [id]
     );
 
     return NextResponse.json({
-      ticket: ticket.rows[0],
-      replies: replies.rows,
+      ticket,
+      replies: repliesRes.rows,
     });
   } catch (err: any) {
+    // ✅ shows up in Railway logs
+    console.error("TICKETS/[id] GET error:", err);
+
     return NextResponse.json(
-      { error: "Failed to load ticket thread", details: String(err?.message || err) },
+      {
+        error: "Failed to load ticket thread",
+        details: String(err?.message || err),
+      },
       { status: 500 }
     );
   }
