@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { websiteDb } from "@/lib/db";
 import { initTicketTables } from "@/lib/initTickets";
 
+export const runtime = "nodejs";
+
 export async function GET(req: NextRequest) {
   try {
     await initTicketTables();
@@ -10,6 +12,7 @@ export async function GET(req: NextRequest) {
     const result = await db.query(`SELECT * FROM tickets ORDER BY created_at DESC`);
     return NextResponse.json(result.rows);
   } catch (err: any) {
+    console.error("TICKETS GET error:", err);
     return NextResponse.json(
       { error: "Failed to load tickets", details: String(err?.message || err) },
       { status: 500 }
@@ -41,6 +44,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result.rows[0]);
   } catch (err: any) {
+    console.error("TICKETS POST error:", err);
     return NextResponse.json(
       { error: "Failed to create ticket", details: String(err?.message || err) },
       { status: 500 }

@@ -7,12 +7,11 @@ export async function initTicketTables() {
 
   const db = websiteDb();
 
-  // ✅ Ensure UUID function exists (Railway usually supports this, but this prevents “stuck loading”)
-  // If permission is denied, it won't crash the app.
+  // Try to enable UUID helper (safe if no permission)
   try {
     await db.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
   } catch {
-    // ignore if no permission
+    // ignore
   }
 
   await db.query(`
