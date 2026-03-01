@@ -7,12 +7,9 @@ export async function initTicketTables() {
 
   const db = websiteDb();
 
-  // Try to enable UUID helper (safe if no permission)
   try {
     await db.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -21,7 +18,9 @@ export async function initTicketTables() {
       description TEXT NOT NULL,
       created_by TEXT NOT NULL,
       role TEXT NOT NULL,
-      status TEXT DEFAULT 'open',
+      status TEXT DEFAULT 'open',          -- open | answered | closed
+      kind TEXT DEFAULT 'ticket',          -- ticket | announcement
+      pinned BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
     );
@@ -37,6 +36,10 @@ export async function initTicketTables() {
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
+
+  // ✅ Safe upgrades for older tables
+  try { await db.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'ticket';`); } catch {}
+  try { await db.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE;`); } catch {}
 
   initialized = true;
 }

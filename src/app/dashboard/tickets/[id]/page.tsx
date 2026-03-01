@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useSession } from "next-auth/react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 type Ticket = {
   id: string;
@@ -57,7 +57,7 @@ const textarea = {
 };
 
 export default function TicketThreadPage() {
-  // ✅ Reliable client-side params
+  const router = useRouter();
   const params = useParams<{ id?: string }>();
   const ticketId = typeof params?.id === "string" ? params.id : "";
 
@@ -87,15 +87,10 @@ export default function TicketThreadPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(
-          data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to load thread."
-        );
+        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to load thread.");
         setTicket(null);
         setReplies([]);
       } else {
-        // ✅ SUPPORT BOTH SHAPES:
-        // A) { ticket: {...}, replies: [...] }
-        // B) { ticket: { ..., replies: [...] } }
         const ticketObj: Ticket | null = data?.ticket ?? null;
 
         const repliesArr: Reply[] = Array.isArray(data?.replies)
@@ -117,7 +112,6 @@ export default function TicketThreadPage() {
   }
 
   React.useEffect(() => {
-    // ✅ Don’t call API until we actually have the id
     if (!ticketId) {
       setLoading(true);
       return;
@@ -210,13 +204,21 @@ export default function TicketThreadPage() {
           <strong style={{ display: "block", marginBottom: 6 }}>Error</strong>
           <div style={{ opacity: 0.9, fontSize: 13 }}>{error}</div>
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
+            <button className="btn" onClick={() => router.push("/dashboard/tickets")}>
+              ← Back to Tickets
+            </button>
             <button className="btn" onClick={() => loadThread(ticketId)}>
               Retry
             </button>
           </div>
         </div>
       ) : !ticket ? (
-        <div style={card}>Ticket not found.</div>
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>Ticket not found.</div>
+            <button className="btn" onClick={() => router.push("/dashboard/tickets")}>← Back to Tickets</button>
+          </div>
+        </div>
       ) : (
         <>
           {/* Header */}
@@ -234,6 +236,9 @@ export default function TicketThreadPage() {
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <button className="btn" onClick={() => router.push("/dashboard/tickets")}>
+                  ← Back to Tickets
+                </button>
                 <button className="btn" onClick={() => loadThread(ticketId)} disabled={saving}>
                   Refresh
                 </button>
