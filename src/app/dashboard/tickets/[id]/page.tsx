@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useSession } from "next-auth/react";
+import { useParams } from "next/navigation";
 
 type Ticket = {
   id: string;
@@ -55,8 +56,10 @@ const textarea = {
   resize: "vertical" as const,
 };
 
-export default function TicketThreadPage({ params }: { params: { id: string } }) {
-  const ticketId = params.id;
+export default function TicketThreadPage() {
+  // ✅ Reliable client-side params
+  const params = useParams<{ id?: string }>();
+  const ticketId = typeof params?.id === "string" ? params.id : "";
 
   const { data: session } = useSession();
   const s: any = session;
@@ -70,19 +73,23 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   const [message, setMessage] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
-  async function loadThread() {
+  async function loadThread(id: string) {
+    if (!id) return;
+
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`, {
+      const res = await fetch(`/api/tickets/${encodeURIComponent(id)}`, {
         cache: "no-store" as any,
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to load thread.");
+        setError(
+          data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to load thread."
+        );
         setTicket(null);
         setReplies([]);
       } else {
@@ -100,7 +107,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
         setTicket(ticketObj);
         setReplies(repliesArr);
       }
-    } catch (e: any) {
+    } catch {
       setError("Failed to load ticket thread (network/API error).");
       setTicket(null);
       setReplies([]);
@@ -110,12 +117,17 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   }
 
   React.useEffect(() => {
-    loadThread();
+    // ✅ Don’t call API until we actually have the id
+    if (!ticketId) {
+      setLoading(true);
+      return;
+    }
+    loadThread(ticketId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId]);
 
   async function sendReply() {
-    if (!message.trim()) return;
+    if (!message.trim() || !ticketId) return;
     setSaving(true);
     setError(null);
 
@@ -137,7 +149,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
       }
 
       setMessage("");
-      await loadThread();
+      await loadThread(ticketId);
     } catch {
       setError("Failed to send reply (network/API error).");
     } finally {
@@ -146,6 +158,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   }
 
   async function markAnswered() {
+    if (!ticketId) return;
     setSaving(true);
     setError(null);
 
@@ -156,7 +169,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
         setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to mark answered.");
         return;
       }
-      await loadThread();
+      await loadThread(ticketId);
     } catch {
       setError("Failed to mark answered (network/API error).");
     } finally {
@@ -165,6 +178,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   }
 
   async function closeTicket() {
+    if (!ticketId) return;
     setSaving(true);
     setError(null);
 
@@ -175,7 +189,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
         setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to close ticket.");
         return;
       }
-      await loadThread();
+      await loadThread(ticketId);
     } catch {
       setError("Failed to close ticket (network/API error).");
     } finally {
@@ -187,14 +201,16 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {loading ? (
+      {!ticketId ? (
+        <div style={card}>Loading thread…</div>
+      ) : loading ? (
         <div style={card}>Loading thread…</div>
       ) : error ? (
         <div style={{ ...card, borderColor: "rgba(255,120,120,.30)", background: "rgba(255,120,120,.06)" }}>
           <strong style={{ display: "block", marginBottom: 6 }}>Error</strong>
           <div style={{ opacity: 0.9, fontSize: 13 }}>{error}</div>
           <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-            <button className="btn" onClick={loadThread}>
+            <button className="btn" onClick={() => loadThread(ticketId)}>
               Retry
             </button>
           </div>
@@ -218,7 +234,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <button className="btn" onClick={loadThread} disabled={saving}>
+                <button className="btn" onClick={() => loadThread(ticketId)} disabled={saving}>
                   Refresh
                 </button>
                 <button className="btn" onClick={markAnswered} disabled={saving || status === "closed"}>
