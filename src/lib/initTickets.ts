@@ -1,10 +1,19 @@
-import { websiteDb } from "@/lib/db"
+import { websiteDb } from "@/lib/db";
 
-let initialized = false
+let initialized = false;
 
 export async function initTicketTables() {
-  if (initialized) return
-  const db = websiteDb()
+  if (initialized) return;
+
+  const db = websiteDb();
+
+  // ✅ Ensure UUID function exists (Railway usually supports this, but this prevents “stuck loading”)
+  // If permission is denied, it won't crash the app.
+  try {
+    await db.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+  } catch {
+    // ignore if no permission
+  }
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -17,7 +26,7 @@ export async function initTicketTables() {
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
     );
-  `)
+  `);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS ticket_replies (
@@ -28,7 +37,7 @@ export async function initTicketTables() {
       message TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT NOW()
     );
-  `)
+  `);
 
-  initialized = true
+  initialized = true;
 }
