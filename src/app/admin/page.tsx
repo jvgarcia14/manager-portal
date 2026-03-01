@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Row = {
   email: string;
@@ -116,6 +117,8 @@ function Btn({
 }
 
 export default function AdminUsersPage() {
+  const router = useRouter();
+
   const [tab, setTab] = useState<Tab>("pending");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -158,6 +161,28 @@ export default function AdminUsersPage() {
       await load(tab);
     } catch (e: any) {
       setErr(e?.message || "Action failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ✅ NEW: role update
+  async function setRole(email: string, role: string) {
+    setLoading(true);
+    setErr(null);
+
+    try {
+      const res = await fetch(`/api/admin/users`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, action: "set_role", role }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+
+      await load(tab);
+    } catch (e: any) {
+      setErr(e?.message || "Role update failed");
     } finally {
       setLoading(false);
     }
@@ -234,6 +259,10 @@ export default function AdminUsersPage() {
               <Badge tone={tab === "pending" ? "yellow" : tab === "approved" ? "green" : "blue"}>
                 {tab.toUpperCase()}
               </Badge>
+
+              <Btn variant="ghost" disabled={loading} onClick={() => router.back()}>
+                ← Back
+              </Btn>
 
               <Btn variant="ghost" disabled={loading} onClick={() => load(tab)}>
                 {loading ? "Refreshing…" : "Refresh"}
@@ -313,9 +342,7 @@ export default function AdminUsersPage() {
                     const status = (r.status || "pending").toLowerCase();
                     const role = (r.role || "user").toLowerCase();
 
-                    const statusTone =
-                      status === "approved" ? "green" : status === "pending" ? "yellow" : "gray";
-
+                    const statusTone = status === "approved" ? "green" : status === "pending" ? "yellow" : "gray";
                     const roleTone = role === "admin" ? "blue" : "gray";
 
                     return (
@@ -330,7 +357,28 @@ export default function AdminUsersPage() {
                           <Badge tone={statusTone as any}>{status}</Badge>
                         </Td>
                         <Td>
-                          <Badge tone={roleTone as any}>{role}</Badge>
+                          <select
+                            value={role}
+                            disabled={loading}
+                            onChange={(e) => setRole(r.email, e.target.value)}
+                            style={{
+                              padding: "9px 12px",
+                              borderRadius: 12,
+                              background: "rgba(0,0,0,.15)",
+                              border: "1px solid rgba(255,255,255,.10)",
+                              color: "#EAF0FF",
+                              fontWeight: 850,
+                            }}
+                          >
+                            <option value="user">user</option>
+                            <option value="coach">coach</option>
+                            <option value="manager">manager</option>
+                            <option value="admin">admin</option>
+                          </select>
+
+                          <div style={{ marginTop: 8 }}>
+                            <Badge tone={roleTone as any}>{role}</Badge>
+                          </div>
                         </Td>
                         <Td style={{ color: "rgba(234,240,255,0.80)", whiteSpace: "nowrap" }}>
                           {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
