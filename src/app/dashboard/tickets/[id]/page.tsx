@@ -70,31 +70,42 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   const [saving, setSaving] = React.useState(false);
 
   async function loadThread() {
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
 
-    try {
-      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`, {
-        cache: "no-store" as any,
-      });
-      const data = await res.json();
+  try {
+    const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`, {
+      cache: "no-store" as any,
+    });
 
-      if (!res.ok) {
-        setError(data?.error || "Failed to load thread.");
-        setTicket(null);
-        setReplies([]);
-      } else {
-        setTicket(data.ticket);
-        setReplies(Array.isArray(data.replies) ? data.replies : []);
-      }
-    } catch {
-      setError("Failed to load thread. Check API/DB.");
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data?.error || "Failed to load thread.");
       setTicket(null);
       setReplies([]);
-    } finally {
-      setLoading(false);
+    } else {
+      // ✅ supports BOTH API shapes:
+      // A) { ticket: {...}, replies: [...] }
+      // B) { ticket: { ..., replies: [...] } }
+      const ticketObj = data?.ticket || null;
+      const repliesArr = Array.isArray(data?.replies)
+        ? data.replies
+        : Array.isArray(data?.ticket?.replies)
+        ? data.ticket.replies
+        : [];
+
+      setTicket(ticketObj);
+      setReplies(repliesArr);
     }
+  } catch {
+    setError("Failed to load thread. Check API/DB.");
+    setTicket(null);
+    setReplies([]);
+  } finally {
+    setLoading(false);
   }
+}
 
   React.useEffect(() => {
     loadThread();
