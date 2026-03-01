@@ -11,6 +11,7 @@ type Ticket = {
   role: string;
   status: string;
   created_at: string;
+  updated_at?: string;
 };
 
 type Reply = {
@@ -50,7 +51,7 @@ const input = {
 
 const textarea = {
   ...input,
-  minHeight: 110,
+  minHeight: 120,
   resize: "vertical" as const,
 };
 
@@ -70,42 +71,43 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
   const [saving, setSaving] = React.useState(false);
 
   async function loadThread() {
-  setLoading(true);
-  setError(null);
+    setLoading(true);
+    setError(null);
 
-  try {
-    const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`, {
-      cache: "no-store" as any,
-    });
+    try {
+      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`, {
+        cache: "no-store" as any,
+      });
 
-    const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-    if (!res.ok) {
-      setError(data?.error || "Failed to load thread.");
+      if (!res.ok) {
+        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to load thread.");
+        setTicket(null);
+        setReplies([]);
+      } else {
+        // ✅ SUPPORT BOTH SHAPES:
+        // A) { ticket: {...}, replies: [...] }
+        // B) { ticket: { ..., replies: [...] } }
+        const ticketObj: Ticket | null = data?.ticket ?? null;
+
+        const repliesArr: Reply[] = Array.isArray(data?.replies)
+          ? data.replies
+          : Array.isArray(data?.ticket?.replies)
+          ? data.ticket.replies
+          : [];
+
+        setTicket(ticketObj);
+        setReplies(repliesArr);
+      }
+    } catch (e: any) {
+      setError("Failed to load ticket thread (network/API error).");
       setTicket(null);
       setReplies([]);
-    } else {
-      // ✅ supports BOTH API shapes:
-      // A) { ticket: {...}, replies: [...] }
-      // B) { ticket: { ..., replies: [...] } }
-      const ticketObj = data?.ticket || null;
-      const repliesArr = Array.isArray(data?.replies)
-        ? data.replies
-        : Array.isArray(data?.ticket?.replies)
-        ? data.ticket.replies
-        : [];
-
-      setTicket(ticketObj);
-      setReplies(repliesArr);
+    } finally {
+      setLoading(false);
     }
-  } catch {
-    setError("Failed to load thread. Check API/DB.");
-    setTicket(null);
-    setReplies([]);
-  } finally {
-    setLoading(false);
   }
-}
 
   React.useEffect(() => {
     loadThread();
@@ -130,14 +132,14 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || "Failed to send reply.");
+        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to send reply.");
         return;
       }
 
       setMessage("");
       await loadThread();
     } catch {
-      setError("Failed to send reply. Check API/DB.");
+      setError("Failed to send reply (network/API error).");
     } finally {
       setSaving(false);
     }
@@ -148,17 +150,15 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
     setError(null);
 
     try {
-      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/answered`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/answered`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || "Failed to mark as answered.");
+        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to mark answered.");
         return;
       }
       await loadThread();
     } catch {
-      setError("Failed to mark as answered. Check API/DB.");
+      setError("Failed to mark answered (network/API error).");
     } finally {
       setSaving(false);
     }
@@ -169,17 +169,15 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
     setError(null);
 
     try {
-      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/close`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/close`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || "Failed to close ticket.");
+        setError(data?.error ? `${data.error}${data?.details ? ` — ${data.details}` : ""}` : "Failed to close ticket.");
         return;
       }
       await loadThread();
     } catch {
-      setError("Failed to close ticket. Check API/DB.");
+      setError("Failed to close ticket (network/API error).");
     } finally {
       setSaving(false);
     }
@@ -208,7 +206,7 @@ export default function TicketThreadPage({ params }: { params: { id: string } })
           {/* Header */}
           <div style={card}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 240 }}>
+              <div style={{ minWidth: 260 }}>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   <span style={pill(status === "open")}>{status.toUpperCase()}</span>
                   <span style={pill(false)}>{ticket.role}</span>
