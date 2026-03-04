@@ -1,100 +1,135 @@
 import { NextResponse } from "next/server";
-import { Pool } from "pg";
+import { salesDb } from "@/lib/db";
 
-const salesPool = new Pool({
-  connectionString: process.env.SALES_DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-function tierFromPercentile(rank: number, total: number) {
-  if (total <= 0) return 1;
-  const p = (rank + 1) / total; // rank 0 = best
-  if (p <= 0.1) return 5;
-  if (p <= 0.3) return 4;
-  if (p <= 0.6) return 3;
-  if (p <= 0.85) return 2;
-  return 1;
+// ✅ Tier rules (based on DAILY AVERAGE within the selected window)
+// Edit these to match your business rules.
+function computeTier(dailyAvg: number) {
+  // Example thresholds (USD/day)
+  if (dailyAvg >= 5000) return { tier: 1, band: "elite" as const };
+  if (dailyAvg >= 2500) return { tier: 2, band: "great" as const };
+  if (dailyAvg >= 1200) return { tier: 3, band: "good" as const };
+  if (dailyAvg >= 600) return { tier: 4, band: "ok" as const };
+  return { tier: 5, band: "bad" as const };
+}
+
+function clampDays(n: number) {
+  if ([7, 14, 30].includes(n)) return n;
+  return 30;
+}
+
+function normalizeUsername(u: any) {
+  const s = String(u || "").trim();
+  if (!s) return "";
+  return s.startsWith("@") ? s : `@${s}`;
 }
 
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+
+  // UI passes ?days=7|14|30
+  const days = clampDays(Number(searchParams.get("days") || "30"));
+
+  // Optional filter: ?team=Black (if you want per-team tiers)
+  const team = (searchParams.get("team") || "").trim();
+
+  const now = new Date();
+  const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+
+  const pool = salesDb();
+  const client = await pool.connect();
+
   try {
-    const { searchParams } = new URL(req.url);
+    // If bot hasn’t been restarted with the new code yet, these columns won’t exist.
+    // We keep the error message clear if that happens.
+    //
+    // We group by chatter_id, and use MAX() for name/user to avoid duplicates.
+    // We also compute active_days (distinct day buckets) to help debug/UX if needed.
 
-    const days = Math.max(1, Number(searchParams.get("days") || "30"));
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    // ✅ Group by chatter chat_id (this is the sender / chatter)
-    // Join teams to show chatter name (teams.chat_id, teams.name)
-    const res = await salesPool.query(
-      `
+    const sql = `
       SELECT
-        s.chat_id,
-        COALESCE(t.name, 'Chatter ' || s.chat_id::text) AS display_name,
-        COALESCE(SUM(s.amount), 0) AS total_sales
-      FROM sales s
-      LEFT JOIN teams t ON t.chat_id = s.chat_id
-      WHERE s.chat_id IS NOT NULL
-        AND s.ts >= $1
-      GROUP BY s.chat_id, t.name
+        chatter_id,
+        MAX(COALESCE(chatter_name, '')) AS chatter_name,
+        MAX(COALESCE(chatter_username, '')) AS chatter_username,
+        COALESCE(SUM(amount), 0) AS total_sales,
+        COUNT(DISTINCT DATE(ts AT TIME ZONE 'Asia/Manila')) AS active_days
+      FROM sales
+      WHERE
+        ts >= $1
+        ${team ? "AND team = $2" : ""}
+        AND chatter_id IS NOT NULL
+      GROUP BY chatter_id
       ORDER BY total_sales DESC
-      `,
-      [from]
-    );
+      LIMIT 500
+    `;
 
-    const rows = res.rows || [];
+    const params: any[] = team ? [from, team] : [from];
 
-    // If still empty, return helpful stats (so we can see what's missing)
-    if (rows.length === 0) {
-      const stats = await salesPool.query(`
-        SELECT
-          COUNT(*)::int AS total_rows,
-          SUM(CASE WHEN chat_id IS NULL THEN 1 ELSE 0 END)::int AS null_chat_id_rows,
-          MIN(ts) AS min_ts,
-          MAX(ts) AS max_ts
-        FROM sales
-      `);
+    const res = await client.query(sql, params);
 
-      return NextResponse.json({
-        ok: true,
-        days,
-        from: from.toISOString(),
-        tiers: [],
-        debug: stats.rows?.[0] || null,
-        note:
-          "No rows matched (chat_id not null + within date range). Check if sales.chat_id is being saved, or if ts timezone/range is wrong.",
-      });
-    }
+    const tiers = res.rows.map((r: any) => {
+      const chatterId = r.chatter_id;
 
-    // daily average + tier based on daily average
-    const withAvg = rows.map((r: any) => {
+      // Prefer chatter_name; fallback to username; fallback "Unknown"
+      const username = normalizeUsername(r.chatter_username);
+      const displayName =
+        String(r.chatter_name || "").trim() ||
+        (username ? username.replace(/^@/, "") : "") ||
+        "Unknown";
+
       const totalSales = Number(r.total_sales || 0);
       const dailyAvg = totalSales / days;
 
+      const { tier, band } = computeTier(dailyAvg);
+
       return {
-        chatterId: String(r.chat_id),
-        displayName: String(r.display_name || "").trim(),
-        username: "", // not stored in sales schema you showed
+        chatterId,
+        displayName,
+        username, // should already be single @
         totalSales: Math.round(totalSales * 100) / 100,
         dailyAvg: Math.round(dailyAvg * 100) / 100,
+        tier,
+        band, // "elite" | "great" | "good" | "ok" | "bad"
+        activeDays: Number(r.active_days || 0),
       };
     });
-
-    // sort by daily average for tiering
-    withAvg.sort((a, b) => b.dailyAvg - a.dailyAvg);
-
-    const total = withAvg.length;
-    const tiers = withAvg.map((r, i) => ({
-      ...r,
-      tier: tierFromPercentile(i, total),
-    }));
 
     return NextResponse.json({
       ok: true,
       days,
+      team: team || null,
       from: from.toISOString(),
+      to: now.toISOString(),
       tiers,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    const msg = String(e?.message || e);
+
+    // Helpful hint if bot isn't updated yet
+    if (
+      msg.toLowerCase().includes("column") &&
+      (msg.toLowerCase().includes("chatter_id") ||
+        msg.toLowerCase().includes("chatter_name") ||
+        msg.toLowerCase().includes("chatter_username"))
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Sales table missing chatter columns. Restart your Telegram bot with the updated salescheck2.0 so it can auto-add: chatter_id, chatter_name, chatter_username.",
+          detail: msg,
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      { ok: false, error: "tiers query failed", detail: msg },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
   }
 }
